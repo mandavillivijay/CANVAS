@@ -91,3 +91,20 @@ HuggingFace hub symlink warning on Windows (non-functional, cosmetic only). Supp
 
 ### Next session
 Phase 4: Adversarial test scenarios — DOM restructuring, attribute changes, complete redesigns, false-positive detection
+
+---
+
+## Session 004 — 2026-06-12
+
+### What was built
+
+**demo.py** (project root) — self-contained end-to-end pipeline demonstration. Runs the full CANVAS lifecycle in a single `python demo.py` invocation: Record two element intents from a V1 checkout UI, simulate a UI redesign (different IDs, different DOM structure), collect V2 candidates, and resolve each intent through `ConfidenceGatedResolver`. Prints step-labelled output for each phase and exits with code 1 if any intent reaches FAILED status, making it CI-friendly.
+
+**docs/architecture.md** — technical reference for QE engineers new to embeddings. Covers: ASCII flow diagram of the Record → IntentStore → Resolve pipeline; field-by-field breakdown of `SemanticDescriptor` and the `to_text()` template with a concrete example; rationale for `all-MiniLM-L6-v2` and what dim=384 normalized vectors give us; confidence gate thresholds with tuning guidance; and the SQLite schema with notes on binary blob storage and idempotent upsert.
+
+### Key design decision
+
+`demo.py` uses `page.set_content()` with inline HTML strings rather than loading any external URL. This makes the demo fully self-contained — no live server, no network access, no fixture setup — so community members can clone the repo and run it immediately. V1 and V2 are defined as module-level string constants, making the "UI redesign" simulation explicit and readable without any test fixtures.
+
+### Next session
+Adversarial test suite — Phase 4 complete: DOM restructuring scenarios, attribute-only changes, complete semantic redesigns, and false-positive detection across dissimilar elements.
