@@ -53,18 +53,18 @@ _PLAYWRIGHT_JS = """(selector) => {
                 if (h) return (h.innerText || '').trim().substring(0, 80);
                 sib = sib.previousElementSibling;
             }
-            current = current.parentElement;
+            current = current.parentElement || (current.getRootNode && current.getRootNode().host) || null;
         }
         return '';
     }
 
     function nearestLandmark(node) {
         const lm = new Set(['nav','main','aside','footer','header','form','section','article']);
-        let current = node.parentElement;
+        let current = node.parentElement || (node.getRootNode && node.getRootNode().host) || null;
         while (current) {
             if (lm.has(current.tagName.toLowerCase()))
                 return current.getAttribute('role') || current.tagName.toLowerCase();
-            current = current.parentElement;
+            current = current.parentElement || (current.getRootNode && current.getRootNode().host) || null;
         }
         return '';
     }
@@ -120,7 +120,7 @@ class SemanticDescriptor:
             parts.append(f"inside {self.landmark}")
         if self.section_heading:
             parts.append(f"under heading '{self.section_heading}'")
-        if self.parent_tag and self.parent_tag not in ("", "body", "div", "span"):
+        if self.parent_tag and self.parent_tag not in ("", "body", "div", "span") and self.parent_tag != self.landmark:
             parts.append(f"within {self.parent_tag}")
         return " ".join(parts)
 
@@ -185,6 +185,31 @@ def extract_from_tag(el: Tag) -> SemanticDescriptor:
 def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
     """Extract a SemanticDescriptor from a live Playwright page by CSS selector."""
     info = page.evaluate(_PLAYWRIGHT_JS, selector)
+    if info is None:
+        raise ValueError(f"Element not found for selector: {selector!r}")
+
+    tag = info["tag"]
+    element_type = info["element_type"]
+    role = _infer_role(tag, element_type, info["explicit_role"])
+    parent_role = _infer_role(info["parent_tag"], "", info["parent_explicit_role"])
+
+    return SemanticDescriptor(
+        tag=tag,
+        role=role,
+        label=info["label"].strip(),
+        element_type=element_type,
+        placeholder=info["placeholder"].strip(),
+        text_content=info["text_content"],
+        parent_tag=info["parent_tag"],
+        parent_role=parent_role,
+        section_heading=info["section_heading"],
+        landmark=info["landmark"],
+    )
+
+
+async def extract_from_playwright_async(page, selector: str) -> SemanticDescriptor:
+    """Extract a SemanticDescriptor from an async Playwright page by CSS selector."""
+    info = await page.evaluate(_PLAYWRIGHT_JS, selector)
     if info is None:
         raise ValueError(f"Element not found for selector: {selector!r}")
 

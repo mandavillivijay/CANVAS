@@ -31,10 +31,15 @@ class ResolverResult:
     message: str
 
 
+_DEFAULT_DB = Path(__file__).parent.parent / "canvas_intents.db"
+
+
 class IntentStore:
     """SQLite-backed store for intent fingerprints (descriptor + embedding)."""
 
-    def __init__(self, db_path: str | Path = "canvas_intents.db") -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        if db_path is None:
+            db_path = _DEFAULT_DB
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS intents (
@@ -43,10 +48,16 @@ class IntentStore:
                 selector    TEXT    NOT NULL,
                 descriptor  TEXT    NOT NULL,
                 embedding   BLOB    NOT NULL,
+                model_name  TEXT    NOT NULL DEFAULT '',
                 created_at  TEXT    DEFAULT (datetime('now'))
             )
         """)
         self._conn.commit()
+        try:
+            self._conn.execute("ALTER TABLE intents ADD COLUMN model_name TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     def store(
         self,
@@ -54,10 +65,11 @@ class IntentStore:
         selector: str,
         descriptor: SemanticDescriptor,
         embedding: np.ndarray,
+        model_name: str = "",
     ) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding) VALUES (?, ?, ?, ?)",
-            (name, selector, json.dumps(descriptor.to_dict()), embedding.astype(np.float32).tobytes()),
+            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name) VALUES (?, ?, ?, ?, ?)",
+            (name, selector, json.dumps(descriptor.to_dict()), embedding.astype(np.float32).tobytes(), model_name),
         )
         self._conn.commit()
 
@@ -77,6 +89,15 @@ class IntentStore:
             landmark=d["landmark"],
         )
         return selector, descriptor, np.frombuffer(blob, dtype=np.float32).copy()
+
+    def all(self) -> list[tuple[str, str]]:
+        """Return list of (name, selector) for all stored intents."""
+        rows = self._conn.execute("SELECT name, selector FROM intents ORDER BY name").fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+    def count(self) -> int:
+        """Return the number of stored intents."""
+        return self._conn.execute("SELECT COUNT(*) FROM intents").fetchone()[0]
 
     def close(self) -> None:
         self._conn.close()
@@ -109,7 +130,16 @@ class ConfidenceGatedResolver:
 
     def record(self, name: str, selector: str, descriptor: SemanticDescriptor) -> None:
         """Embed and persist an intent fingerprint under the given name."""
-        self._store.store(name, selector, descriptor, self._embedder.embed_descriptor(descriptor))
+        embedding = self._embedder.embed_descriptor(descriptor)
+        self._store.store(name, selector, descriptor, embedding, model_name=self._embedder.MODEL_NAME)
+
+    def precompute_candidates(
+        self, candidates: list[tuple[str, "SemanticDescriptor"]]
+    ) -> list[tuple[str, "SemanticDescriptor", np.ndarray]]:
+        """Pre-embed a candidate list once, to reuse across multiple resolve() calls."""
+        descriptors = [desc for _, desc in candidates]
+        embeddings = self._embedder.batch_embed_descriptors(descriptors)
+        return [(sel, desc, emb) for (sel, desc), emb in zip(candidates, embeddings)]
 
     def resolve(
         self,
@@ -135,11 +165,14 @@ class ConfidenceGatedResolver:
         best_descriptor: Optional[SemanticDescriptor] = None
         best_score = -1.0
 
-        for selector, descriptor in candidates:
-            score = IntentEmbedder.cosine_similarity(
-                stored_embedding,
-                self._embedder.embed_descriptor(descriptor),
-            )
+        for item in candidates:
+            if len(item) == 3:
+                selector, descriptor, candidate_embedding = item
+            else:
+                selector, descriptor = item
+                candidate_embedding = self._embedder.embed_descriptor(descriptor)
+
+            score = IntentEmbedder.cosine_similarity(stored_embedding, candidate_embedding)
             if score > best_score:
                 best_score, best_selector, best_descriptor = score, selector, descriptor
 

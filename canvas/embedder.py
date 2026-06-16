@@ -29,6 +29,17 @@ class IntentEmbedder:
         """Embed a SemanticDescriptor by calling its to_text() method."""
         return self.embed(descriptor.to_text())
 
+    def batch_embed(self, texts: list[str]) -> list[np.ndarray]:
+        """Embed a list of texts in one batched call. Much faster than calling embed() in a loop."""
+        if not texts:
+            return []
+        vecs = self._model.encode(texts, normalize_embeddings=True, batch_size=32)
+        return [v.astype(np.float32) for v in vecs]
+
+    def batch_embed_descriptors(self, descriptors: list) -> list[np.ndarray]:
+        """Batch-embed a list of SemanticDescriptors."""
+        return self.batch_embed([d.to_text() for d in descriptors])
+
     @staticmethod
     def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
         """Cosine similarity of two pre-normalized vectors (dot product)."""

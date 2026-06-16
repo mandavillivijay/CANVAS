@@ -108,3 +108,35 @@ Phase 4: Adversarial test scenarios — DOM restructuring, attribute changes, co
 
 ### Next session
 Adversarial test suite — Phase 4 complete: DOM restructuring scenarios, attribute-only changes, complete semantic redesigns, and false-positive detection across dissimilar elements.
+
+---
+
+## Session 005 — 2026-06-16
+
+### What was built
+
+**tests/adversarial/test_healing.py** — the Phase 4 adversarial test suite. It exercises the full Record → resolve lifecycle against deliberately hostile UI changes to prove that healing is driven by semantic intent rather than brittle addressing, and — just as important — that it refuses to heal when intent genuinely differs.
+
+Ten scenarios cover both the heal path and the guardrails:
+
+1. **DOM restructuring** — the target element moves to a different container (form → section); intent is preserved, so it must still heal.
+2. **ID/class churn** — the same button reappears with entirely different brittle attributes (id/class).
+3. **Label paraphrase** — an `aria-label` is reworded but carries the same intent.
+4. **Section heading rename** — the surrounding heading changes (shipping → delivery).
+5. **Landmark change** — the enclosing landmark changes (nav → main).
+6. **False positive guard** — a completely dissimilar element must NOT auto-heal.
+7. **False positive guard** — same element type, different purpose (email input vs. coupon-code input) must not be confused.
+8. **Best candidate wins** — in a pool of four adversarial candidates, the resolver picks the single best semantic match.
+9. **Complete semantic removal** — when candidates are empty, resolution returns FAILED rather than forcing a match.
+10. **Threshold override** — a custom `threshold_auto` is respected and changes the gate decision.
+
+### Design decisions
+
+- **`scope="module"` fixture for the embedder/resolver setup.** The `all-MiniLM-L6-v2` model is ~90MB and dominates runtime on load. Loading it once per module (rather than per-test) keeps the adversarial suite fast while still isolating it from the other test modules.
+- **BeautifulSoup, not Playwright, for the adversarial DOM.** These scenarios are about semantic matching logic, not live-browser behaviour, so candidates are built from HTML strings via `extract_from_tag`. This keeps the suite hermetic and fast — no Chromium launch, no network, no async — while exercising the same descriptor → embedding → gate path. Live-DOM extraction stays covered by the smoke test and demo.
+- **Threshold-override test drives a borderline pair.** Rather than asserting on a hard-coded similarity number (brittle against model updates), the test uses a candidate whose similarity sits between two thresholds and shows that flipping `threshold_auto` flips the decision — proving the override is wired through the gate rather than checking a specific float.
+- **False-positive scenarios are first-class.** Half the value of a self-healing locator is knowing when *not* to heal, so the dissimilar-element and same-type/different-purpose cases assert the resolver declines (FAILED / NEEDS_CONFIRMATION) rather than only testing the happy path.
+
+### Next session
+
+Phase 4 complete. Project is now ready for community release. Consider: publishing to PyPI, adding a CONTRIBUTING.md, writing a blog post for the QE community.

@@ -25,8 +25,9 @@ even when its *address* is not.
 
 ## Status
 
-Phase 3 complete — Confidence-Gated Resolver implemented and tested (22/22 tests passing).
-Phase 4 (Adversarial Testing) in progress.
+All 4 phases complete. The core pipeline (descriptor, embedder, confidence-gated resolver)
+is implemented and tested, and the adversarial test suite covering DOM restructuring,
+attribute churn, semantic paraphrase, and false-positive detection is in place — all tests passing.
 
 ## Roadmap
 
@@ -35,7 +36,7 @@ Phase 4 (Adversarial Testing) in progress.
 | 1 | Semantic Element Descriptor | Complete |
 | 2 | Intent Embedding | Complete |
 | 3 | Confidence-Gated Resolver | Complete |
-| 4 | Adversarial Testing | In progress |
+| 4 | Adversarial Testing | Complete |
 
 ## Structure
 

@@ -101,13 +101,26 @@ def main() -> None:
         page.set_content(HTML_V2)
 
         # Build candidate list: all buttons and inputs in V2
-        candidate_elements = page.query_selector_all("button, input")
+        candidate_elements = page.query_selector_all(
+            "a, button, input, select, textarea, "
+            "[role='button'], [role='link'], [role='checkbox'], "
+            "[role='menuitem'], [role='tab'], [role='option']"
+        )
         candidates = []
         for el in candidate_elements:
-            sel = el.evaluate("e => e.id ? '#' + e.id : e.tagName.toLowerCase()")
+            sel = el.evaluate("""e => {
+    if (e.id) return '#' + e.id;
+    const tag = e.tagName.toLowerCase();
+    const parent = e.parentElement;
+    if (!parent) return tag;
+    const siblings = Array.from(parent.children).filter(c => c.tagName === e.tagName);
+    if (siblings.length === 1) return tag;
+    const idx = siblings.indexOf(e) + 1;
+    return tag + ':nth-of-type(' + idx + ')';
+}""")
             desc = extract_from_playwright(page, sel)
             candidates.append((sel, desc))
-            print(f"[CANDIDATE] selector='{sel}'  →  {desc.to_text()}")
+            print(f"[CANDIDATE] selector='{sel}'  ->  {desc.to_text()}")
 
         # ------------------------------------------------------------------ #
         # STEP C — Resolve phase

@@ -29,12 +29,18 @@ def resolver():
 
 
 @pytest.fixture(scope="module")
-def browser_page():
+def _browser():
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        page = browser.new_page()
-        yield page
+        yield browser
         browser.close()
+
+
+@pytest.fixture
+def browser_page(_browser):
+    page = _browser.new_page()
+    yield page
+    page.close()
 
 
 # ---------------------------------------------------------------------------
