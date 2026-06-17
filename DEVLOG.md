@@ -165,3 +165,23 @@ Community release and v0.2.0 enhancements shipped.
 - **Multilingual model support** — `IntentEmbedder.get(model_name)` singleton keyed by model; `MULTILINGUAL_MODEL` constant for non-English UIs
 - **Re-record CLI** — `canvas-heal rerecord / list / audit` commands via `canvas_heal/cli.py`
 - Published v0.2.0 to PyPI
+
+---
+
+## Session 007 — 2026-06-17
+
+### What was done
+
+Ecosystem, adoption, and v0.3.0 shipped.
+
+**Documentation and community:**
+- README fully overhauled — PyPI/Python badges, "What's inside v0.2.0" capabilities section, updated status, structure tree with `canvas_heal/cli.py`, Quick Start with `pip install canvas-heal` and rerecord example, full CLI reference
+- `CHANGELOG.md` created at project root covering v0.1.0 and v0.2.0
+- GitHub releases created for v0.1.0, v0.2.0, and v0.3.0 with release notes
+
+**v0.3.0 enhancements (57/57 tests passing):**
+- **GitHub Actions CI** — `.github/workflows/ci.yml` runs the full test suite on every push and PR across Python 3.11, 3.12, 3.13
+- **pytest plugin** — `canvas_heal/pytest_plugin.py` registered as `pytest11` entry point; provides `canvas_store`, `canvas_embedder`, and `canvas_resolver` session-scoped fixtures with `--canvas-db` and `--canvas-model` CLI options — zero boilerplate for teams integrating CANVAS-HEAL
+- **Selenium adapter** — `extract_from_selenium(driver, selector)` added to `descriptor.py`; selenium is an optional dependency (`pip install canvas-heal[selenium]`); guarded import with a clear error message if not installed
+- **iframe support** — `extract_from_playwright_frame(page, frame_selector, element_selector)` and async variant added; unblocks elements inside payment forms (Stripe, Braintree) and embedded widgets
+- Published v0.3.0 to PyPI
