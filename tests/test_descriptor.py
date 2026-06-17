@@ -87,3 +87,28 @@ def test_to_dict_has_text_key():
     assert d["label"] == "Close dialog"
     assert "text" in d
     assert d["text"] == desc.to_text()
+
+
+def test_disabled_attribute_detected():
+    desc = extract_from_tag(_parse("<button disabled>Submit</button>"))
+    assert desc.is_disabled is True
+
+
+def test_aria_disabled_detected():
+    desc = extract_from_tag(_parse('<div role="button" aria-disabled="true">Go</div>'))
+    assert desc.is_disabled is True
+
+
+def test_enabled_element_not_disabled():
+    desc = extract_from_tag(_parse("<button>Submit</button>"))
+    assert desc.is_disabled is False
+
+
+def test_bounding_box_none_from_tag():
+    desc = extract_from_tag(_parse("<button>Submit</button>"))
+    assert desc.bounding_box is None
+
+
+def test_is_visible_true_from_tag():
+    desc = extract_from_tag(_parse("<button>Submit</button>"))
+    assert desc.is_visible is True

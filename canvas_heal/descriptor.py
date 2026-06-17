@@ -37,9 +37,8 @@ _INPUT_TYPE_ROLES: dict[str, str] = {
     "search": "searchbox",
 }
 
-# JavaScript injected into a Playwright page to extract element properties
-_PLAYWRIGHT_JS = """(selector) => {
-    const el = document.querySelector(selector);
+# JavaScript run against a Playwright element handle to extract element properties
+_PLAYWRIGHT_JS = """(el) => {
     if (!el) return null;
 
     function nearestHeading(node) {
@@ -70,6 +69,7 @@ _PLAYWRIGHT_JS = """(selector) => {
     }
 
     const parent = el.parentElement;
+    const style = getComputedStyle(el);
     return {
         tag: el.tagName.toLowerCase(),
         explicit_role: el.getAttribute('role') || '',
@@ -81,6 +81,14 @@ _PLAYWRIGHT_JS = """(selector) => {
         parent_explicit_role: parent ? (parent.getAttribute('role') || '') : '',
         section_heading: nearestHeading(el),
         landmark: nearestLandmark(el),
+        is_visible: el.offsetParent !== null && style.visibility !== 'hidden' && style.display !== 'none' && !el.hidden,
+        is_disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
+        bounding_box: el.getBoundingClientRect ? {
+            x: Math.round(el.getBoundingClientRect().x),
+            y: Math.round(el.getBoundingClientRect().y),
+            width: Math.round(el.getBoundingClientRect().width),
+            height: Math.round(el.getBoundingClientRect().height)
+        } : null,
     };
 }"""
 
@@ -105,6 +113,9 @@ class SemanticDescriptor:
     parent_role: str
     section_heading: str
     landmark: str
+    is_visible: bool = True
+    is_disabled: bool = False
+    bounding_box: dict | None = None
 
     def to_text(self) -> str:
         parts = [self.role or self.tag]
@@ -136,6 +147,9 @@ class SemanticDescriptor:
             "parent_role": self.parent_role,
             "section_heading": self.section_heading,
             "landmark": self.landmark,
+            "is_visible": self.is_visible,
+            "is_disabled": self.is_disabled,
+            "bounding_box": self.bounding_box,
             "text": self.to_text(),
         }
 
@@ -168,6 +182,8 @@ def extract_from_tag(el: Tag) -> SemanticDescriptor:
             break
         node = node.parent
 
+    is_disabled = el.get("disabled") is not None or el.get("aria-disabled") == "true"
+
     return SemanticDescriptor(
         tag=tag,
         role=role,
@@ -179,14 +195,18 @@ def extract_from_tag(el: Tag) -> SemanticDescriptor:
         parent_role=parent_role,
         section_heading=section_heading,
         landmark=landmark,
+        is_visible=True,
+        is_disabled=is_disabled,
+        bounding_box=None,
     )
 
 
 def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
     """Extract a SemanticDescriptor from a live Playwright page by CSS selector."""
-    info = page.evaluate(_PLAYWRIGHT_JS, selector)
-    if info is None:
+    handle = page.query_selector(selector)
+    if handle is None:
         raise ValueError(f"Element not found for selector: {selector!r}")
+    info = handle.evaluate(_PLAYWRIGHT_JS)
 
     tag = info["tag"]
     element_type = info["element_type"]
@@ -204,14 +224,18 @@ def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
         parent_role=parent_role,
         section_heading=info["section_heading"],
         landmark=info["landmark"],
+        is_visible=info["is_visible"],
+        is_disabled=info["is_disabled"],
+        bounding_box=info["bounding_box"],
     )
 
 
 async def extract_from_playwright_async(page, selector: str) -> SemanticDescriptor:
     """Extract a SemanticDescriptor from an async Playwright page by CSS selector."""
-    info = await page.evaluate(_PLAYWRIGHT_JS, selector)
-    if info is None:
+    handle = await page.query_selector(selector)
+    if handle is None:
         raise ValueError(f"Element not found for selector: {selector!r}")
+    info = await handle.evaluate(_PLAYWRIGHT_JS)
 
     tag = info["tag"]
     element_type = info["element_type"]
@@ -229,4 +253,7 @@ async def extract_from_playwright_async(page, selector: str) -> SemanticDescript
         parent_role=parent_role,
         section_heading=info["section_heading"],
         landmark=info["landmark"],
+        is_visible=info["is_visible"],
+        is_disabled=info["is_disabled"],
+        bounding_box=info["bounding_box"],
     )
