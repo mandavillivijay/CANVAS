@@ -1,3 +1,6 @@
+from unittest import mock
+
+import pytest
 from bs4 import BeautifulSoup
 from canvas_heal.descriptor import extract_from_tag
 
@@ -112,3 +115,31 @@ def test_bounding_box_none_from_tag():
 def test_is_visible_true_from_tag():
     desc = extract_from_tag(_parse("<button>Submit</button>"))
     assert desc.is_visible is True
+
+
+def test_extract_from_selenium_import_error():
+    from canvas_heal.descriptor import extract_from_selenium
+
+    blocked = {
+        "selenium": None,
+        "selenium.webdriver": None,
+        "selenium.webdriver.common": None,
+        "selenium.webdriver.common.by": None,
+        "selenium.webdriver.remote": None,
+        "selenium.webdriver.remote.webelement": None,
+    }
+    with mock.patch.dict("sys.modules", blocked):
+        with pytest.raises(ImportError):
+            extract_from_selenium(None, "button")
+
+
+def test_selenium_js_constant_exists():
+    from canvas_heal.descriptor import _SELENIUM_JS
+
+    assert isinstance(_SELENIUM_JS, str)
+
+
+def test_extract_from_playwright_frame_function_exists():
+    from canvas_heal.descriptor import extract_from_playwright_frame
+
+    assert callable(extract_from_playwright_frame)

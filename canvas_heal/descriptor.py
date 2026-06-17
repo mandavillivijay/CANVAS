@@ -93,6 +93,52 @@ _PLAYWRIGHT_JS = """(el) => {
 }"""
 
 
+_SELENIUM_JS = """
+var el = arguments[0];
+var parent = el.parentElement;
+function nearestHeading(node) {
+    var current = node;
+    while (current && current !== document.body) {
+        var sib = current.previousElementSibling;
+        while (sib) {
+            if (/^H[1-6]$/.test(sib.tagName)) return (sib.innerText || '').trim().substring(0, 80);
+            var h = sib.querySelector('h1,h2,h3,h4,h5,h6');
+            if (h) return (h.innerText || '').trim().substring(0, 80);
+            sib = sib.previousElementSibling;
+        }
+        current = current.parentElement;
+    }
+    return '';
+}
+function nearestLandmark(node) {
+    var lm = ['nav','main','aside','footer','header','form','section','article'];
+    var current = node.parentElement;
+    while (current) {
+        if (lm.indexOf(current.tagName.toLowerCase()) !== -1)
+            return current.getAttribute('role') || current.tagName.toLowerCase();
+        current = current.parentElement;
+    }
+    return '';
+}
+var rect = el.getBoundingClientRect();
+return {
+    tag: el.tagName.toLowerCase(),
+    explicit_role: el.getAttribute('role') || '',
+    label: el.getAttribute('aria-label') || el.getAttribute('title') || '',
+    element_type: (el.getAttribute('type') || '').toLowerCase(),
+    placeholder: el.getAttribute('placeholder') || '',
+    text_content: (el.innerText || el.textContent || '').trim().substring(0, 120),
+    parent_tag: parent ? parent.tagName.toLowerCase() : '',
+    parent_explicit_role: parent ? (parent.getAttribute('role') || '') : '',
+    section_heading: nearestHeading(el),
+    landmark: nearestLandmark(el),
+    is_visible: el.offsetParent !== null && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none' && !el.hidden,
+    is_disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
+    bounding_box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+};
+"""
+
+
 def _infer_role(tag: str, element_type: str, explicit_role: str) -> str:
     if explicit_role:
         return explicit_role
@@ -227,6 +273,99 @@ def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
         is_visible=info["is_visible"],
         is_disabled=info["is_disabled"],
         bounding_box=info["bounding_box"],
+    )
+
+
+def extract_from_selenium(driver, selector: str) -> SemanticDescriptor:
+    """Extract a SemanticDescriptor from a live Selenium driver by CSS selector."""
+    try:
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.remote.webelement import WebElement  # noqa: F401
+    except ImportError:
+        raise ImportError("selenium is required: pip install canvas-heal[selenium]")
+
+    el = driver.find_element(By.CSS_SELECTOR, selector)
+    info = driver.execute_script(_SELENIUM_JS, el)
+
+    tag = info["tag"]
+    element_type = info["element_type"]
+    role = _infer_role(tag, element_type, info["explicit_role"])
+    parent_role = _infer_role(info["parent_tag"], "", info["parent_explicit_role"])
+
+    return SemanticDescriptor(
+        tag=tag,
+        role=role,
+        label=info["label"].strip(),
+        element_type=element_type,
+        placeholder=info["placeholder"].strip(),
+        text_content=info["text_content"],
+        parent_tag=info["parent_tag"],
+        parent_role=parent_role,
+        section_heading=info["section_heading"],
+        landmark=info["landmark"],
+        is_visible=info.get("is_visible", True),
+        is_disabled=info.get("is_disabled", False),
+        bounding_box=info.get("bounding_box"),
+    )
+
+
+def extract_from_playwright_frame(page, frame_selector: str, element_selector: str) -> SemanticDescriptor:
+    """Extract a SemanticDescriptor from an element inside an iframe."""
+    frame = page.frame_locator(frame_selector)
+    handle = frame.locator(element_selector).element_handle()
+    if handle is None:
+        raise ValueError(f"Element not found: frame={frame_selector!r}, selector={element_selector!r}")
+    info = handle.evaluate(_PLAYWRIGHT_JS)
+    if info is None:
+        raise ValueError(f"Element not found in frame: {element_selector!r}")
+    tag = info["tag"]
+    element_type = info["element_type"]
+    role = _infer_role(tag, element_type, info["explicit_role"])
+    parent_role = _infer_role(info["parent_tag"], "", info["parent_explicit_role"])
+    return SemanticDescriptor(
+        tag=tag,
+        role=role,
+        label=info["label"].strip(),
+        element_type=element_type,
+        placeholder=info["placeholder"].strip(),
+        text_content=info["text_content"],
+        parent_tag=info["parent_tag"],
+        parent_role=parent_role,
+        section_heading=info["section_heading"],
+        landmark=info["landmark"],
+        is_visible=info.get("is_visible", True),
+        is_disabled=info.get("is_disabled", False),
+        bounding_box=info.get("bounding_box"),
+    )
+
+
+async def extract_from_playwright_frame_async(page, frame_selector: str, element_selector: str) -> SemanticDescriptor:
+    """Extract a SemanticDescriptor from an element inside an iframe (async)."""
+    frame = page.frame_locator(frame_selector)
+    handle = await frame.locator(element_selector).element_handle()
+    if handle is None:
+        raise ValueError(f"Element not found: frame={frame_selector!r}, selector={element_selector!r}")
+    info = await handle.evaluate(_PLAYWRIGHT_JS)
+    if info is None:
+        raise ValueError(f"Element not found in frame: {element_selector!r}")
+    tag = info["tag"]
+    element_type = info["element_type"]
+    role = _infer_role(tag, element_type, info["explicit_role"])
+    parent_role = _infer_role(info["parent_tag"], "", info["parent_explicit_role"])
+    return SemanticDescriptor(
+        tag=tag,
+        role=role,
+        label=info["label"].strip(),
+        element_type=element_type,
+        placeholder=info["placeholder"].strip(),
+        text_content=info["text_content"],
+        parent_tag=info["parent_tag"],
+        parent_role=parent_role,
+        section_heading=info["section_heading"],
+        landmark=info["landmark"],
+        is_visible=info.get("is_visible", True),
+        is_disabled=info.get("is_disabled", False),
+        bounding_box=info.get("bounding_box"),
     )
 
 
