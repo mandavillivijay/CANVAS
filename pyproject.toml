@@ -33,9 +33,15 @@ dependencies = [
 [project.scripts]
 canvas-heal = "canvas_heal.cli:main"
 
+[project.entry-points."pytest11"]
+canvas-heal = "canvas_heal.pytest_plugin"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",
+]
+selenium = [
+    "selenium>=4.0.0",
 ]
 
 [project.urls]
