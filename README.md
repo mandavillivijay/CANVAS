@@ -1,3 +1,5 @@
+[![PyPI version](https://img.shields.io/pypi/v/canvas-heal.svg)](https://pypi.org/project/canvas-heal/) [![Python](https://img.shields.io/pypi/pyversions/canvas-heal.svg)](https://pypi.org/project/canvas-heal/)
+
 # CANVAS
 Context-Aware Navigation and Visual Anchoring System for Selectors
 
@@ -23,11 +25,20 @@ This means a "Submit Order" button that moves from a sidebar to a modal, or gets
 from `#btn-submit` to `#cta-primary`, can still be found — because its *intent* is preserved
 even when its *address* is not.
 
+## What's inside (v0.2.0)
+
+- **Semantic intent anchoring** — encodes role, accessible label, heading context, landmark, and visible text into a dense vector
+- **Shadow DOM piercing** — `extract_from_playwright` uses the Playwright ElementHandle approach, natively reaching into shadow roots
+- **Visibility and disabled-state filtering** — the resolver skips hidden and disabled candidates automatically
+- **Bounding box capture** — `(x, y, width, height)` geometry to disambiguate duplicate-intent elements
+- **Page/flow context** — intents are scoped to a URL, so a checkout `Submit` is never confused with a login `Submit`
+- **Healing audit log + JUnit XML export** — structured healing decisions for CI dashboards
+- **Multilingual model support** — swap in `paraphrase-multilingual-MiniLM-L12-v2` (or any sentence-transformers model)
+- **Re-record CLI** — `canvas-heal rerecord / list / audit`
+
 ## Status
 
-All 4 phases complete. The core pipeline (descriptor, embedder, confidence-gated resolver)
-is implemented and tested, and the adversarial test suite covering DOM restructuring,
-attribute churn, semantic paraphrase, and false-positive detection is in place — all tests passing.
+All phases complete. **v0.2.0 published** to PyPI as [`canvas-heal`](https://pypi.org/project/canvas-heal/).
 
 ## Roadmap
 
@@ -41,21 +52,35 @@ attribute churn, semantic paraphrase, and false-positive detection is in place �
 ## Structure
 
 ```
-canvas/         — core source code
-  descriptor.py — DOM element descriptor extraction
-  embedder.py   — sentence-transformers embedding pipeline
-  resolver.py   — confidence-gated semantic resolver + SQLite intent store
-tests/          — unit tests and adversarial test scenarios
-docs/           — technical documentation
+canvas_heal/        — core source code
+  descriptor.py     — DOM element descriptor extraction (+ shadow DOM, bounding box)
+  embedder.py       — sentence-transformers embedding pipeline
+  resolver.py       — confidence-gated semantic resolver + SQLite intent store
+  cli.py            — canvas-heal command-line interface
+tests/              — unit tests and adversarial test scenarios
+docs/               — technical documentation
 ```
 
 ## Quick Start
 
 ```bash
-pip install -r requirements.txt
+pip install canvas-heal
 python -m playwright install chromium
 python -m pytest tests/ -v
+# Re-record an intent against a live URL
+canvas-heal rerecord --url https://yourapp.com/checkout --selector "#submit-btn" --name checkout_submit --db tests/intents.db
 ```
+
+## CLI reference
+
+The `canvas-heal` command provides three subcommands:
+
+- **`canvas-heal rerecord`** — capture a fresh intent from a live page.
+  Flags: `--url <page>`, `--selector <css>`, `--name <intent-name>`, `--db <path>`.
+- **`canvas-heal list`** — list recorded intents in a database.
+  Flags: `--db <path>`.
+- **`canvas-heal audit`** — print the healing audit log.
+  Flags: `--db <path>`.
 
 ## Contributing
 
