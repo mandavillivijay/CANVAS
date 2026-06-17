@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -31,6 +33,17 @@ class ResolverResult:
     message: str
 
 
+@dataclass
+class HealingEvent:
+    intent_name: str
+    status: Resolution
+    confidence: float
+    original_selector: str
+    resolved_selector: str | None
+    page_url: str
+    timestamp: str  # ISO 8601 format
+
+
 _DEFAULT_DB = Path(__file__).parent.parent / "canvas_intents.db"
 
 
@@ -49,12 +62,18 @@ class IntentStore:
                 descriptor  TEXT    NOT NULL,
                 embedding   BLOB    NOT NULL,
                 model_name  TEXT    NOT NULL DEFAULT '',
+                page_url    TEXT    NOT NULL DEFAULT '',
                 created_at  TEXT    DEFAULT (datetime('now'))
             )
         """)
         self._conn.commit()
         try:
             self._conn.execute("ALTER TABLE intents ADD COLUMN model_name TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        try:
+            self._conn.execute("ALTER TABLE intents ADD COLUMN page_url TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
@@ -66,20 +85,21 @@ class IntentStore:
         descriptor: SemanticDescriptor,
         embedding: np.ndarray,
         model_name: str = "",
+        page_url: str = "",
     ) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name) VALUES (?, ?, ?, ?, ?)",
-            (name, selector, json.dumps(descriptor.to_dict()), embedding.astype(np.float32).tobytes(), model_name),
+            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, selector, json.dumps(descriptor.to_dict()), embedding.astype(np.float32).tobytes(), model_name, page_url),
         )
         self._conn.commit()
 
-    def get(self, name: str) -> Optional[Tuple[str, SemanticDescriptor, np.ndarray]]:
+    def get(self, name: str) -> Optional[Tuple[str, SemanticDescriptor, np.ndarray, str]]:
         row = self._conn.execute(
-            "SELECT selector, descriptor, embedding FROM intents WHERE name = ?", (name,)
+            "SELECT selector, descriptor, embedding, page_url FROM intents WHERE name = ?", (name,)
         ).fetchone()
         if row is None:
             return None
-        selector, descriptor_json, blob = row
+        selector, descriptor_json, blob, page_url = row
         d = json.loads(descriptor_json)
         descriptor = SemanticDescriptor(
             tag=d["tag"], role=d["role"], label=d["label"],
@@ -88,7 +108,7 @@ class IntentStore:
             parent_role=d["parent_role"], section_heading=d["section_heading"],
             landmark=d["landmark"],
         )
-        return selector, descriptor, np.frombuffer(blob, dtype=np.float32).copy()
+        return selector, descriptor, np.frombuffer(blob, dtype=np.float32).copy(), page_url
 
     def all(self) -> list[tuple[str, str]]:
         """Return list of (name, selector) for all stored intents."""
@@ -127,11 +147,21 @@ class ConfidenceGatedResolver:
         self._embedder = embedder or IntentEmbedder.get()
         self.threshold_auto = threshold_auto
         self.threshold_confirm = threshold_confirm
+        self._audit_log: list[HealingEvent] = []
 
-    def record(self, name: str, selector: str, descriptor: SemanticDescriptor) -> None:
+    def record(
+        self,
+        name: str,
+        selector: str,
+        descriptor: SemanticDescriptor,
+        page_url: str = "",
+    ) -> None:
         """Embed and persist an intent fingerprint under the given name."""
         embedding = self._embedder.embed_descriptor(descriptor)
-        self._store.store(name, selector, descriptor, embedding, model_name=self._embedder.MODEL_NAME)
+        self._store.store(
+            name, selector, descriptor, embedding,
+            model_name=self._embedder.MODEL_NAME, page_url=page_url,
+        )
 
     def precompute_candidates(
         self, candidates: list[tuple[str, "SemanticDescriptor"]]
@@ -145,6 +175,7 @@ class ConfidenceGatedResolver:
         self,
         name: str,
         candidates: List[Tuple[str, SemanticDescriptor]],
+        skip_hidden: bool = True,
     ) -> ResolverResult:
         """
         Find the best-matching candidate for a stored intent.
@@ -152,15 +183,23 @@ class ConfidenceGatedResolver:
         Returns HEALED if confidence >= threshold_auto,
                 NEEDS_CONFIRMATION if >= threshold_confirm,
                 FAILED otherwise.
+
+        When skip_hidden is True, candidates that are hidden (is_visible=False)
+        or disabled (is_disabled=True) are skipped before scoring.
         """
         stored = self._store.get(name)
         if stored is None:
-            return ResolverResult(Resolution.FAILED, None, 0.0, None, f"No intent stored for '{name}'")
+            result = ResolverResult(Resolution.FAILED, None, 0.0, None, f"No intent stored for '{name}'")
+            self._log_event(name, result, original_selector="", page_url="")
+            return result
+
+        original_selector, _, stored_embedding, page_url = stored
 
         if not candidates:
-            return ResolverResult(Resolution.FAILED, None, 0.0, None, "No candidates provided")
+            result = ResolverResult(Resolution.FAILED, None, 0.0, None, "No candidates provided")
+            self._log_event(name, result, original_selector, page_url)
+            return result
 
-        _, _, stored_embedding = stored
         best_selector: Optional[str] = None
         best_descriptor: Optional[SemanticDescriptor] = None
         best_score = -1.0
@@ -170,6 +209,15 @@ class ConfidenceGatedResolver:
                 selector, descriptor, candidate_embedding = item
             else:
                 selector, descriptor = item
+                candidate_embedding = None
+
+            if skip_hidden:
+                if getattr(descriptor, "is_visible", True) == False:
+                    continue
+                if getattr(descriptor, "is_disabled", False) == True:
+                    continue
+
+            if candidate_embedding is None:
                 candidate_embedding = self._embedder.embed_descriptor(descriptor)
 
             score = IntentEmbedder.cosine_similarity(stored_embedding, candidate_embedding)
@@ -177,16 +225,73 @@ class ConfidenceGatedResolver:
                 best_score, best_selector, best_descriptor = score, selector, descriptor
 
         if best_score >= self.threshold_auto:
-            return ResolverResult(
+            result = ResolverResult(
                 Resolution.HEALED, best_selector, best_score, best_descriptor,
                 f"Auto-healed to '{best_selector}' (confidence {best_score:.3f})",
             )
-        if best_score >= self.threshold_confirm:
-            return ResolverResult(
+        elif best_score >= self.threshold_confirm:
+            result = ResolverResult(
                 Resolution.NEEDS_CONFIRMATION, best_selector, best_score, best_descriptor,
                 f"Needs confirmation: best match '{best_selector}' (confidence {best_score:.3f})",
             )
-        return ResolverResult(
-            Resolution.FAILED, None, best_score, best_descriptor,
-            f"No confident match found (best confidence {best_score:.3f})",
-        )
+        else:
+            result = ResolverResult(
+                Resolution.FAILED, None, best_score, best_descriptor,
+                f"No confident match found (best confidence {best_score:.3f})",
+            )
+
+        self._log_event(name, result, original_selector, page_url)
+        return result
+
+    def _log_event(
+        self,
+        name: str,
+        result: ResolverResult,
+        original_selector: str,
+        page_url: str,
+    ) -> None:
+        self._audit_log.append(HealingEvent(
+            intent_name=name,
+            status=result.status,
+            confidence=result.confidence,
+            original_selector=original_selector,
+            resolved_selector=result.selector,
+            page_url=page_url,
+            timestamp=datetime.utcnow().isoformat(),
+        ))
+
+    def get_audit_log(self) -> list[HealingEvent]:
+        return self._audit_log
+
+    def clear_audit_log(self) -> None:
+        self._audit_log = []
+
+    def export_junit_xml(self, path: str | Path, suite_name: str = "canvas-heal") -> None:
+        n = len(self._audit_log)
+        failures = sum(1 for e in self._audit_log if e.status == Resolution.FAILED)
+        testsuite = ET.Element("testsuite", {
+            "name": suite_name,
+            "tests": str(n),
+            "failures": str(failures),
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        for event in self._audit_log:
+            testcase = ET.SubElement(testsuite, "testcase", {
+                "name": event.intent_name,
+                "classname": "canvas_heal",
+            })
+            if event.status == Resolution.NEEDS_CONFIRMATION:
+                system_out = ET.SubElement(testcase, "system-out")
+                system_out.text = (
+                    f"Needs confirmation: confidence={event.confidence:.3f}, "
+                    f"resolved to {event.resolved_selector}"
+                )
+            elif event.status == Resolution.FAILED:
+                failure = ET.SubElement(testcase, "failure", {
+                    "message": f"{event.intent_name} could not be resolved",
+                    "type": "CanvasHealFailure",
+                })
+                failure.text = f"confidence={event.confidence:.3f}"
+
+        tree = ET.ElementTree(testsuite)
+        tree.write(path, encoding="unicode", xml_declaration=True)
