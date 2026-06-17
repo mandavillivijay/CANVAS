@@ -4,7 +4,7 @@ import json
 import sqlite3
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -257,7 +257,7 @@ class ConfidenceGatedResolver:
             original_selector=original_selector,
             resolved_selector=result.selector,
             page_url=page_url,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         ))
 
     def get_audit_log(self) -> list[HealingEvent]:
@@ -273,7 +273,7 @@ class ConfidenceGatedResolver:
             "name": suite_name,
             "tests": str(n),
             "failures": str(failures),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         for event in self._audit_log:
             testcase = ET.SubElement(testsuite, "testcase", {
