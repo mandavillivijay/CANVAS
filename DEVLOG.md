@@ -185,3 +185,39 @@ Ecosystem, adoption, and v0.3.0 shipped.
 - **Selenium adapter** — `extract_from_selenium(driver, selector)` added to `descriptor.py`; selenium is an optional dependency (`pip install canvas-heal[selenium]`); guarded import with a clear error message if not installed
 - **iframe support** — `extract_from_playwright_frame(page, frame_selector, element_selector)` and async variant added; unblocks elements inside payment forms (Stripe, Braintree) and embedded widgets
 - Published v0.3.0 to PyPI
+
+---
+
+## Session 008 — 2026-06-17
+
+### What was done
+
+Built and ran the ShopEasy checkout pilot — a controlled end-to-end validation of CANVAS-HEAL against a realistic UI redesign scenario.
+
+**Pilot structure (`pilot/`):**
+- `html.py` — two versions of a ShopEasy checkout page as inline HTML constants. V1 is the original UI with semantic IDs. V2 is a full redesign: all IDs removed, class names changed, button text reworded, nav restructured, landmark tags changed.
+- `conftest.py` — session-scoped fixtures: records all V1 intents once, pre-embeds all V2 candidates once, exposes a shared resolver and a V2 page for targeted extractions.
+- `test_checkout.py` — 20 tests covering the full intent lifecycle.
+
+**Intents recorded (7 total):**
+- `place_order_btn`, `email_input`, `card_number_input`, `card_cvv_input`, `full_name_input`, `back_to_cart_link`, `nav_home_link`
+
+**Test results — 20/20 passing:**
+
+| Scenario | Result | Finding |
+|----------|--------|---------|
+| Email input — ID churn | HEALED (>0.92) | aria-label is stable across redesigns |
+| Card number — restructured | HEALED (>0.92) | aria-label + heading context sufficient |
+| CVV input — ID churn | HEALED (>0.92) | Placeholder + label combination works |
+| Full name — placeholder change | HEALED (>0.92) | aria-label overrides brittle placeholder |
+| Back to cart link — class + text change | HEALED (>0.92) | Text intent preserved despite wording change |
+| Nav home link — class change | HEALED (>0.92) | Nav landmark + text anchors correctly |
+| **CTA "Place Order" → "Confirm & Pay"** | **NEEDS_CONFIRMATION (0.763)** | See key finding below |
+| CVV ≠ Card number (false positive) | REJECTED (<0.75) | Similar element type, different purpose correctly distinguished |
+| Best candidate from mixed pool | Correct element wins | Resolver picks card number over CVV and unrelated elements |
+| Empty candidate pool | FAILED explicitly | No silent false positives |
+| Audit log | Populated correctly | page_url, status, intent_name all captured |
+| JUnit XML export | Valid output | testsuite element + intent names present |
+
+**Key finding — CTA button confidence zone:**
+When the button text changes significantly ("Place Order" → "Confirm & Pay") the model correctly scores 0.763 — landing in NEEDS_CONFIRMATION rather than auto-healing. Multiple factors compound: text change, no aria-label on the button. This is the three-gate system behaving exactly as designed — it finds the right element but flags it for human review rather than silently auto-healing a significant semantic shift. Adding `aria-label` to CTAs at record time would push this into the HEALED zone.
