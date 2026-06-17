@@ -140,3 +140,28 @@ Ten scenarios cover both the heal path and the guardrails:
 ### Next session
 
 Phase 4 complete. Project is now ready for community release. Consider: publishing to PyPI, adding a CONTRIBUTING.md, writing a blog post for the QE community.
+
+---
+
+## Session 006 — 2026-06-17
+
+### What was done
+
+Community release and v0.2.0 enhancements shipped.
+
+**Release tasks (all complete):**
+- Renamed Python package from `canvas` to `canvas_heal` to avoid namespace collision with Canvas Medical SDK on PyPI
+- Added `pyproject.toml` (hatchling build, `canvas-heal` package name) and `CONTRIBUTING.md`
+- Published v0.1.0 to PyPI: `pip install canvas-heal`
+- Announced on Reddit (r/softwaretesting, r/selenium) and LinkedIn
+
+**v0.2.0 enhancements (54/54 tests passing):**
+- **Shadow DOM support** — `extract_from_playwright` now uses Playwright ElementHandle instead of raw `document.querySelector`, natively piercing shadow roots
+- **Visibility/disabled detection** — `is_visible` and `is_disabled` fields added to `SemanticDescriptor`; resolver skips hidden/disabled candidates by default
+- **Bounding box capture** — `bounding_box` (x, y, width, height) stored per element for disambiguation of duplicate-intent elements
+- **Page/flow context** — `page_url` stored in IntentStore and passed through `record()`; prevents cross-contamination between identical elements on different pages
+- **Healing audit log** — `HealingEvent` dataclass; `get_audit_log()` / `clear_audit_log()` on resolver
+- **JUnit XML export** — `export_junit_xml()` for CI dashboard integration (stdlib only)
+- **Multilingual model support** — `IntentEmbedder.get(model_name)` singleton keyed by model; `MULTILINGUAL_MODEL` constant for non-English UIs
+- **Re-record CLI** — `canvas-heal rerecord / list / audit` commands via `canvas_heal/cli.py`
+- Published v0.2.0 to PyPI
