@@ -9,8 +9,8 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from canvas.descriptor import SemanticDescriptor
-from canvas.embedder import IntentEmbedder
+from canvas_heal.descriptor import SemanticDescriptor
+from canvas_heal.embedder import IntentEmbedder
 
 THRESHOLD_AUTO_HEAL = 0.92
 THRESHOLD_CONFIRM = 0.75

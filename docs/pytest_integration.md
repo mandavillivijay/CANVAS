@@ -10,8 +10,8 @@ project-level path so the recorded baseline travels with the suite.
 ```python
 # conftest.py
 import pytest
-from canvas.embedder import IntentEmbedder
-from canvas.resolver import ConfidenceGatedResolver, IntentStore
+from canvas_heal.embedder import IntentEmbedder
+from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore
 
 @pytest.fixture(scope="session")
 def canvas_resolver(tmp_path_factory):
@@ -31,9 +31,9 @@ baseline UI changes.
 
 ```python
 from playwright.sync_api import sync_playwright
-from canvas.descriptor import extract_from_playwright
-from canvas.resolver import ConfidenceGatedResolver, IntentStore
-from canvas.embedder import IntentEmbedder
+from canvas_heal.descriptor import extract_from_playwright
+from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore
+from canvas_heal.embedder import IntentEmbedder
 
 resolver = ConfidenceGatedResolver(IntentStore("tests/intents.db"), IntentEmbedder.get())
 with sync_playwright() as pw:

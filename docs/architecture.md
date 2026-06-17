@@ -44,7 +44,7 @@ CANVAS runs in two phases: **record** (baseline capture at test authoring time) 
 
 ## 2. SemanticDescriptor
 
-`SemanticDescriptor` (`canvas/descriptor.py`) captures the **semantic identity** of a DOM element — not its brittle CSS selector or XPath, but what it *means* and where it sits in the page.
+`SemanticDescriptor` (`canvas_heal/descriptor.py`) captures the **semantic identity** of a DOM element — not its brittle CSS selector or XPath, but what it *means* and where it sits in the page.
 
 | Field | Source | Why it matters |
 |---|---|---|
@@ -97,7 +97,7 @@ After computing cosine similarity between the stored intent vector and each V2 c
 
 **Tuning guidance:**
 
-- The thresholds are module-level constants (`THRESHOLD_AUTO_HEAL = 0.92`, `THRESHOLD_CONFIRM = 0.75` in `canvas/resolver.py`) and can be overridden per resolver instance via constructor arguments.
+- The thresholds are module-level constants (`THRESHOLD_AUTO_HEAL = 0.92`, `THRESHOLD_CONFIRM = 0.75` in `canvas_heal/resolver.py`) and can be overridden per resolver instance via constructor arguments.
 - Lower `threshold_auto` to heal more aggressively (accept more false positives).
 - Raise `threshold_confirm` to widen the FAILED zone (reject more uncertain matches).
 - A reasonable first experiment: run the resolver in dry-run mode on a known-good redesign, observe the score distribution, then set `threshold_auto` just below the 5th-percentile score of true-positive matches.

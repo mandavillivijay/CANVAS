@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from canvas.embedder import IntentEmbedder
+from canvas_heal.embedder import IntentEmbedder
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +41,7 @@ def test_singleton_identity():
 
 def test_embed_descriptor(embedder):
     from bs4 import BeautifulSoup
-    from canvas.descriptor import extract_from_tag
+    from canvas_heal.descriptor import extract_from_tag
     el = BeautifulSoup('<button>Add to Cart</button>', "html.parser").find("button")
     desc = extract_from_tag(el)
     vec = embedder.embed_descriptor(desc)

@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import sync_playwright
 
-from canvas.descriptor import extract_from_playwright
-from canvas.embedder import IntentEmbedder
-from canvas.resolver import ConfidenceGatedResolver, IntentStore, Resolution
+from canvas_heal.descriptor import extract_from_playwright
+from canvas_heal.embedder import IntentEmbedder
+from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore, Resolution
 
 
 # ---------------------------------------------------------------------------

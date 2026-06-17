@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
-from canvas.descriptor import extract_from_tag
-from canvas.embedder import IntentEmbedder
-from canvas.resolver import ConfidenceGatedResolver, IntentStore, Resolution
+from canvas_heal.descriptor import extract_from_tag
+from canvas_heal.embedder import IntentEmbedder
+from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore, Resolution
 import pytest
 
 

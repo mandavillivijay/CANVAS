@@ -1,5 +1,5 @@
 from bs4 import BeautifulSoup
-from canvas.descriptor import extract_from_tag
+from canvas_heal.descriptor import extract_from_tag
 
 
 def _parse(html: str):
