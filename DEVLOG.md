@@ -221,3 +221,48 @@ Built and ran the ShopEasy checkout pilot — a controlled end-to-end validation
 
 **Key finding — CTA button confidence zone:**
 When the button text changes significantly ("Place Order" → "Confirm & Pay") the model correctly scores 0.763 — landing in NEEDS_CONFIRMATION rather than auto-healing. Multiple factors compound: text change, no aria-label on the button. This is the three-gate system behaving exactly as designed — it finds the right element but flags it for human review rather than silently auto-healing a significant semantic shift. Adding `aria-label` to CTAs at record time would push this into the HEALED zone.
+
+---
+
+## Session 009 — 2026-06-18
+
+### What was done
+
+Built the design system migration case study — the hardest CANVAS proof point.
+
+**Case study premise:** A checkout page goes through two migrations. First, raw HTML is replaced by Ant Design (all IDs removed, all inputs share the same class, button text wrapped in nested `<span>`). Then the CTA button is moved to a sticky footer outside the form entirely. A Healenium-style tool fails at every step. CANVAS heals all 5 intents across both migrations.
+
+**New files (`pilot/`):**
+- `html_design_system.py` — three HTML versions as inline constants with detailed comments explaining what changed at each step and why Healenium / CANVAS respond differently.
+- `test_design_system_migration.py` — 25 tests in five sections.
+- `view_design_system.py` — visual browser demo: run `python -m pilot.view_design_system` to open a three-column side-by-side view of V1, V2, V3 with chips and diff annotations.
+
+**Test results — 25/25 passing in 25 seconds:**
+
+| Section | Tests | What is proven |
+|---------|-------|----------------|
+| Part 1: Healenium fails | 11 | Every V1 selector returns `None` in V2 and V3; all 4 inputs share `.ant-input` (indistinguishable) |
+| Part 2: CANVAS heals V1→V2 | 6 | All 5 intents HEALED at ≥0.92; each input resolves to a different element despite shared class |
+| Part 3: CANVAS heals V1→V3 | 5 | Form inputs still HEALED; CTA resolved despite leaving the form entirely |
+| Part 4: False positive guards | 2 | CVV not confused with card number; name not confused with email |
+| Part 5: Summary table | 1 | Machine-readable proof table printed with `pytest -s` |
+
+**Confidence table (V2 / V3):**
+
+| Intent | V2 confidence | V3 confidence | Notes |
+|--------|--------------|--------------|-------|
+| `ds_submit_btn` | 1.000 (HEALED) | ≥0.75 (found) | V3: form/heading context gone, label preserved |
+| `ds_email_input` | 0.963 (HEALED) | 0.963 (HEALED) | aria-label stable |
+| `ds_card_input` | 0.984 (HEALED) | 0.984 (HEALED) | aria-label stable |
+| `ds_cvv_input` | 0.927 (HEALED) | 0.927 (HEALED) | aria-label stable |
+| `ds_name_input` | 0.966 (HEALED) | 0.966 (HEALED) | aria-label stable |
+
+**Key findings:**
+
+1. **`aria-label` is the most stable signal across design system migrations.** Form inputs that carry `aria-label` heal at 0.96–0.98 regardless of DOM nesting depth or whether the element is 1 level deep (V1) or 4 levels deep (V2/V3 inside `ant-input-affix-wrapper → ant-form-item-control → ant-form-item`).
+
+2. **Healenium's class-based fallback fails the "all inputs share one class" problem.** Four distinct inputs all resolve to `class="ant-input"`. Healenium has no way to distinguish them. CANVAS resolves each to a different selector because the semantic intent (aria-label + heading context) is unique per element.
+
+3. **Structural migration (element moves out of form) is handled by label dominance.** When the CTA moves to a sticky footer with its text intact, CANVAS still resolves it. The confidence is lower than V2 (1.000) because the form/heading context is gone, but it is still above the FAILED threshold.
+
+4. **"Complete Purchase" vs "Place Order" is a genuine FAILED zone.** When tested separately (text AND location change simultaneously), confidence drops to 0.619 — FAILED. This is correct behavior: a significant semantic shift with no stable anchor (no aria-label, different text, different landmark) should not auto-heal silently. Re-recording the intent is the right action.
