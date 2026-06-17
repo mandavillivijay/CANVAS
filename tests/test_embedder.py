@@ -47,3 +47,23 @@ def test_embed_descriptor(embedder):
     vec = embedder.embed_descriptor(desc)
     assert vec.shape == (384,)
     assert abs(float(np.linalg.norm(vec)) - 1.0) < 1e-5
+
+
+def test_custom_model_name_stored():
+    assert IntentEmbedder.get("all-MiniLM-L6-v2").MODEL_NAME == "all-MiniLM-L6-v2"
+
+
+def test_different_model_names_are_different_instances():
+    from unittest.mock import patch
+    with patch("sentence_transformers.SentenceTransformer"):
+        other = IntentEmbedder.get("some-other-model")
+    assert IntentEmbedder.get("all-MiniLM-L6-v2") is not other
+
+
+def test_same_model_name_returns_singleton():
+    assert IntentEmbedder.get("all-MiniLM-L6-v2") is IntentEmbedder.get("all-MiniLM-L6-v2")
+
+
+def test_multilingual_constant_exists():
+    from canvas_heal.embedder import MULTILINGUAL_MODEL
+    assert isinstance(MULTILINGUAL_MODEL, str)

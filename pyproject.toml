@@ -30,6 +30,9 @@ dependencies = [
     "beautifulsoup4>=4.12.2",
 ]
 
+[project.scripts]
+canvas-heal = "canvas_heal.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",

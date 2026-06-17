@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import numpy as np
 
+MULTILINGUAL_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+
 
 class IntentEmbedder:
     """Wraps sentence-transformers to produce normalized intent vectors."""
 
     MODEL_NAME = "all-MiniLM-L6-v2"
-    _instance: IntentEmbedder | None = None
+    _instances: dict[str, "IntentEmbedder"] = {}
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         from sentence_transformers import SentenceTransformer
+        self.MODEL_NAME = model_name
         self._model = SentenceTransformer(self.MODEL_NAME)
 
     @classmethod
-    def get(cls) -> IntentEmbedder:
-        """Return the process-wide singleton, loading the model on first call."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def get(cls, model_name: str = "all-MiniLM-L6-v2") -> "IntentEmbedder":
+        """Return the process-wide singleton for a model, loading it on first call."""
+        if model_name not in cls._instances:
+            cls._instances[model_name] = cls(model_name)
+        return cls._instances[model_name]
 
     def embed(self, text: str) -> np.ndarray:
         """Embed a text string into a normalized float32 vector (dim=384)."""
