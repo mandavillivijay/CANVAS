@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from bs4 import Tag
+
+_log = logging.getLogger("canvas_heal.descriptor")
 
 _HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"]
 _LANDMARK_TAGS = frozenset({"nav", "main", "aside", "footer", "header", "form", "section", "article"})
@@ -249,8 +252,10 @@ def extract_from_tag(el: Tag) -> SemanticDescriptor:
 
 def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
     """Extract a SemanticDescriptor from a live Playwright page by CSS selector."""
+    _log.debug("extracting descriptor selector=%r", selector)
     handle = page.query_selector(selector)
     if handle is None:
+        _log.error("element not found selector=%r", selector)
         raise ValueError(f"Element not found for selector: {selector!r}")
     info = handle.evaluate(_PLAYWRIGHT_JS)
 
@@ -278,6 +283,7 @@ def extract_from_playwright(page, selector: str) -> SemanticDescriptor:
 
 def extract_from_selenium(driver, selector: str) -> SemanticDescriptor:
     """Extract a SemanticDescriptor from a live Selenium driver by CSS selector."""
+    _log.debug("extracting descriptor selector=%r (selenium)", selector)
     try:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.remote.webelement import WebElement  # noqa: F401

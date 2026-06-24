@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
+
+_log = logging.getLogger("canvas_heal.resolver")
 
 from canvas_heal.descriptor import SemanticDescriptor
 from canvas_heal.embedder import IntentEmbedder
@@ -157,11 +160,13 @@ class ConfidenceGatedResolver:
         page_url: str = "",
     ) -> None:
         """Embed and persist an intent fingerprint under the given name."""
+        _log.debug("recording intent=%r selector=%r url=%r", name, selector, page_url)
         embedding = self._embedder.embed_descriptor(descriptor)
         self._store.store(
             name, selector, descriptor, embedding,
             model_name=self._embedder.MODEL_NAME, page_url=page_url,
         )
+        _log.debug("recorded intent=%r descriptor=%r", name, descriptor.to_text())
 
     def precompute_candidates(
         self, candidates: list[tuple[str, "SemanticDescriptor"]]
@@ -189,6 +194,7 @@ class ConfidenceGatedResolver:
         """
         stored = self._store.get(name)
         if stored is None:
+            _log.error("FAILED intent=%r reason='no intent stored'", name)
             result = ResolverResult(Resolution.FAILED, None, 0.0, None, f"No intent stored for '{name}'")
             self._log_event(name, result, original_selector="", page_url="")
             return result
@@ -196,13 +202,17 @@ class ConfidenceGatedResolver:
         original_selector, _, stored_embedding, page_url = stored
 
         if not candidates:
+            _log.error("FAILED intent=%r reason='no candidates provided'", name)
             result = ResolverResult(Resolution.FAILED, None, 0.0, None, "No candidates provided")
             self._log_event(name, result, original_selector, page_url)
             return result
 
+        _log.debug("resolving intent=%r candidates=%d", name, len(candidates))
+
         best_selector: Optional[str] = None
         best_descriptor: Optional[SemanticDescriptor] = None
         best_score = -1.0
+        top_scores: list[float] = []
 
         for item in candidates:
             if len(item) == 3:
@@ -221,24 +231,31 @@ class ConfidenceGatedResolver:
                 candidate_embedding = self._embedder.embed_descriptor(descriptor)
 
             score = IntentEmbedder.cosine_similarity(stored_embedding, candidate_embedding)
+            top_scores.append(score)
             if score > best_score:
                 best_score, best_selector, best_descriptor = score, selector, descriptor
+
+        top3 = sorted(top_scores, reverse=True)[:3]
+        _log.debug("intent=%r top3_scores=%s best=%.3f", name, [f"{s:.3f}" for s in top3], best_score)
 
         if best_score >= self.threshold_auto:
             result = ResolverResult(
                 Resolution.HEALED, best_selector, best_score, best_descriptor,
                 f"Auto-healed to '{best_selector}' (confidence {best_score:.3f})",
             )
+            _log.info("HEALED intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
         elif best_score >= self.threshold_confirm:
             result = ResolverResult(
                 Resolution.NEEDS_CONFIRMATION, best_selector, best_score, best_descriptor,
                 f"Needs confirmation: best match '{best_selector}' (confidence {best_score:.3f})",
             )
+            _log.warning("NEEDS_CONFIRMATION intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
         else:
             result = ResolverResult(
                 Resolution.FAILED, None, best_score, best_descriptor,
                 f"No confident match found (best confidence {best_score:.3f})",
             )
+            _log.error("FAILED intent=%r best_confidence=%.3f", name, best_score)
 
         self._log_event(name, result, original_selector, page_url)
         return result
