@@ -1,0 +1,12 @@
+# Global owner — reviews all PRs by default
+* @mandavillivijay
+
+# Security-sensitive files require explicit review
+SECURITY.md @mandavillivijay
+.github/workflows/ @mandavillivijay
+.github/dependabot.yml @mandavillivijay
+pyproject.toml @mandavillivijay
+hatch_build.py @mandavillivijay
+
+# Core library
+canvas_heal/ @mandavillivijay
