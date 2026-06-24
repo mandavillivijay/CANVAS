@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -18,6 +19,28 @@ from canvas_heal.descriptor import SemanticDescriptor
 from canvas_heal.embedder import IntentEmbedder
 
 THRESHOLD_AUTO_HEAL = 0.92
+
+# Default PII regex patterns applied when store_raw_text=False
+_PII_PATTERNS: list[re.Pattern] = [
+    re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"),  # email
+    re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),  # phone
+]
+
+# Descriptor dict keys whose values may contain raw user text
+_TEXT_FIELDS = frozenset({"text_content", "label", "placeholder", "section_heading", "text"})
+
+
+def _scrub(value: str, patterns: list[re.Pattern]) -> str:
+    for p in patterns:
+        value = p.sub("[REDACTED]", value)
+    return value
+
+
+def _scrub_descriptor_dict(d: dict, patterns: list[re.Pattern]) -> dict:
+    return {
+        k: _scrub(v, patterns) if k in _TEXT_FIELDS and isinstance(v, str) else v
+        for k, v in d.items()
+    }
 THRESHOLD_CONFIRM = 0.75
 
 
@@ -53,9 +76,16 @@ _DEFAULT_DB = Path(__file__).parent.parent / "canvas_intents.db"
 class IntentStore:
     """SQLite-backed store for intent fingerprints (descriptor + embedding)."""
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        store_raw_text: bool = True,
+        pii_patterns: list[re.Pattern] | None = None,
+    ) -> None:
         if db_path is None:
             db_path = _DEFAULT_DB
+        self._store_raw_text = store_raw_text
+        self._pii_patterns = pii_patterns if pii_patterns is not None else _PII_PATTERNS
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS intents (
@@ -90,9 +120,15 @@ class IntentStore:
         model_name: str = "",
         page_url: str = "",
     ) -> None:
+        desc_dict = descriptor.to_dict()
+        stored_url = page_url
+        if not self._store_raw_text:
+            desc_dict = _scrub_descriptor_dict(desc_dict, self._pii_patterns)
+            stored_url = _scrub(page_url, self._pii_patterns)
+            _log.debug("stored intent=%r with PII scrubbing applied", name)
         self._conn.execute(
             "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, selector, json.dumps(descriptor.to_dict()), embedding.astype(np.float32).tobytes(), model_name, page_url),
+            (name, selector, json.dumps(desc_dict), embedding.astype(np.float32).tobytes(), model_name, stored_url),
         )
         self._conn.commit()
 

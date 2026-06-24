@@ -15,12 +15,19 @@ def pytest_addoption(parser):
         default="all-MiniLM-L6-v2",
         help="Sentence-transformers model name for intent embedding",
     )
+    group.addoption(
+        "--canvas-scrub-text",
+        action="store_true",
+        default=False,
+        help="Scrub PII (emails, phone numbers) from text stored in the intent database",
+    )
 
 
 @pytest.fixture(scope="session")
 def canvas_store(request):
     db = request.config.getoption("--canvas-db")
-    store = IntentStore(db)
+    scrub = request.config.getoption("--canvas-scrub-text")
+    store = IntentStore(db, store_raw_text=not scrub)
     yield store
     store.close()
 

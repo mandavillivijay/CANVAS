@@ -23,7 +23,7 @@ def _cmd_rerecord(args: argparse.Namespace) -> int:
             page.goto(args.url)
             descriptor = extract_from_playwright(page, args.selector)
 
-            store = IntentStore(args.db)
+            store = IntentStore(args.db, store_raw_text=not args.scrub_text)
             resolver = ConfidenceGatedResolver(store, IntentEmbedder.get(args.model))
             resolver.record(args.name, args.selector, descriptor)
             store.close()
@@ -72,6 +72,7 @@ def main() -> None:
     p_rerecord.add_argument("--name", required=True, help="Intent name to store under")
     p_rerecord.add_argument("--db", required=True, help="Path to the intent store database")
     p_rerecord.add_argument("--model", default="all-MiniLM-L6-v2", help="Embedding model name")
+    p_rerecord.add_argument("--scrub-text", action="store_true", help="Scrub PII (emails, phone numbers) from stored text fields")
     p_rerecord.set_defaults(func=_cmd_rerecord)
 
     p_list = subparsers.add_parser("list", help="List all stored intents")
