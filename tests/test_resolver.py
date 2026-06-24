@@ -8,6 +8,7 @@ from canvas_heal.embedder import IntentEmbedder
 from canvas_heal.resolver import (
     ConfidenceGatedResolver,
     IntentStore,
+    IntentVersion,
     Resolution,
     _scrub,
     _scrub_descriptor_dict,
@@ -242,6 +243,96 @@ def test_store_raw_text_false_resolution_still_works():
     # Embedding was computed before scrubbing, so resolution still succeeds
     assert result.status in (Resolution.HEALED, Resolution.NEEDS_CONFIRMATION)
     assert result.confidence > 0.70
+
+
+# --- Intent Baseline Versioning ---
+
+def test_each_record_creates_a_version():
+    store = IntentStore(":memory:")
+    res = ConfidenceGatedResolver(store, IntentEmbedder.get())
+    desc = extract_from_tag(_tag("<button>Save</button>"))
+
+    res.record("save", "#save-v1", desc)
+    res.record("save", "#save-v2", desc)
+
+    history = store.get_version_history("save")
+    assert len(history) == 2
+    selectors = [v.selector for v in history]
+    assert "#save-v1" in selectors
+    assert "#save-v2" in selectors
+
+
+def test_version_history_is_newest_first():
+    store = IntentStore(":memory:")
+    res = ConfidenceGatedResolver(store, IntentEmbedder.get())
+    desc = extract_from_tag(_tag("<button>Go</button>"))
+
+    res.record("go", "#go-v1", desc)
+    res.record("go", "#go-v2", desc)
+
+    history = store.get_version_history("go")
+    # newest first
+    assert history[0].selector == "#go-v2"
+    assert history[1].selector == "#go-v1"
+
+
+def test_version_history_empty_for_unknown_intent():
+    store = IntentStore(":memory:")
+    assert store.get_version_history("nonexistent") == []
+
+
+def test_rollback_restores_previous_version():
+    store = IntentStore(":memory:")
+    res = ConfidenceGatedResolver(store, IntentEmbedder.get())
+    desc = extract_from_tag(_tag("<button>Cancel</button>"))
+
+    res.record("cancel", "#cancel-v1", desc)
+    history_after_first = store.get_version_history("cancel")
+    v1_id = history_after_first[-1].id  # oldest = first recorded
+
+    res.record("cancel", "#cancel-v2", desc)
+
+    # current should be v2
+    current = store.get("cancel")
+    assert current[0] == "#cancel-v2"
+
+    # rollback to v1
+    ok = store.rollback("cancel", v1_id)
+    assert ok is True
+
+    current_after_rollback = store.get("cancel")
+    assert current_after_rollback[0] == "#cancel-v1"
+
+
+def test_rollback_returns_false_for_wrong_version():
+    store = IntentStore(":memory:")
+    assert store.rollback("nonexistent", 9999) is False
+
+
+def test_rollback_appends_to_version_history():
+    store = IntentStore(":memory:")
+    res = ConfidenceGatedResolver(store, IntentEmbedder.get())
+    desc = extract_from_tag(_tag("<button>Delete</button>"))
+
+    res.record("del", "#del-v1", desc)
+    v1_id = store.get_version_history("del")[0].id
+    res.record("del", "#del-v2", desc)
+
+    store.rollback("del", v1_id)
+
+    history = store.get_version_history("del")
+    assert len(history) == 3  # v1, v2, rollback-to-v1
+    assert "rollback:" in history[0].recorded_by
+
+
+def test_intent_version_dataclass():
+    v = IntentVersion(
+        id=1, intent_name="x", selector="#x",
+        descriptor_text="button", model_name="m",
+        page_url="", recorded_by="test@x.com", recorded_at="2026-01-01",
+    )
+    assert v.id == 1
+    assert v.intent_name == "x"
 
 
 def test_store_raw_text_true_preserves_data():

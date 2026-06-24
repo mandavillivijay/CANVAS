@@ -62,6 +62,38 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_history(args: argparse.Namespace) -> int:
+    store = IntentStore(args.db)
+    try:
+        versions = store.get_version_history(args.name)
+        if not versions:
+            print(f"No version history found for intent '{args.name}'.")
+            return 0
+        print(f"Version history for '{args.name}' ({len(versions)} versions):\n")
+        for v in versions:
+            print(f"  [{v.id:>4}]  {v.recorded_at}  by {v.recorded_by or '(unknown)'}")
+            print(f"          selector: {v.selector}")
+            print(f"          model:    {v.model_name}")
+            print(f"          text:     {v.descriptor_text[:80]}")
+            print()
+    finally:
+        store.close()
+    return 0
+
+
+def _cmd_rollback(args: argparse.Namespace) -> int:
+    store = IntentStore(args.db)
+    try:
+        ok = store.rollback(args.name, args.version_id)
+        if not ok:
+            print(f"Error: version {args.version_id} not found for intent '{args.name}'.", file=sys.stderr)
+            return 1
+        print(f"Rolled back '{args.name}' to version {args.version_id}.")
+    finally:
+        store.close()
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="canvas-heal", description="CANVAS-HEAL semantic self-healing locator CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -82,6 +114,17 @@ def main() -> None:
     p_audit = subparsers.add_parser("audit", help="Show stored intent count and details")
     p_audit.add_argument("--db", required=True, help="Path to the intent store database")
     p_audit.set_defaults(func=_cmd_audit)
+
+    p_history = subparsers.add_parser("history", help="Show version history for a recorded intent")
+    p_history.add_argument("--name", required=True, help="Intent name")
+    p_history.add_argument("--db", required=True, help="Path to the intent store database")
+    p_history.set_defaults(func=_cmd_history)
+
+    p_rollback = subparsers.add_parser("rollback", help="Restore an intent to a previous version")
+    p_rollback.add_argument("--name", required=True, help="Intent name")
+    p_rollback.add_argument("--version-id", required=True, type=int, dest="version_id", help="Version ID from 'canvas-heal history'")
+    p_rollback.add_argument("--db", required=True, help="Path to the intent store database")
+    p_rollback.set_defaults(func=_cmd_rollback)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

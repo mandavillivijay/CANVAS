@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sqlite3
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -41,6 +42,19 @@ def _scrub_descriptor_dict(d: dict, patterns: list[re.Pattern]) -> dict:
         k: _scrub(v, patterns) if k in _TEXT_FIELDS and isinstance(v, str) else v
         for k, v in d.items()
     }
+
+
+def _get_git_email() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.email"],
+            capture_output=True, text=True, timeout=3,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
 THRESHOLD_CONFIRM = 0.75
 
 
@@ -57,6 +71,18 @@ class ResolverResult:
     confidence: float
     descriptor: Optional[SemanticDescriptor]
     message: str
+
+
+@dataclass
+class IntentVersion:
+    id: int
+    intent_name: str
+    selector: str
+    descriptor_text: str
+    model_name: str
+    page_url: str
+    recorded_by: str
+    recorded_at: str
 
 
 @dataclass
@@ -86,6 +112,7 @@ class IntentStore:
             db_path = _DEFAULT_DB
         self._store_raw_text = store_raw_text
         self._pii_patterns = pii_patterns if pii_patterns is not None else _PII_PATTERNS
+        self._recorded_by = _get_git_email()
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS intents (
@@ -99,17 +126,29 @@ class IntentStore:
                 created_at  TEXT    DEFAULT (datetime('now'))
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS intent_versions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                intent_name TEXT    NOT NULL,
+                selector    TEXT    NOT NULL,
+                descriptor  TEXT    NOT NULL,
+                embedding   BLOB    NOT NULL,
+                model_name  TEXT    NOT NULL DEFAULT '',
+                page_url    TEXT    NOT NULL DEFAULT '',
+                recorded_by TEXT    NOT NULL DEFAULT '',
+                recorded_at TEXT    DEFAULT (datetime('now'))
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_versions_intent_name ON intent_versions (intent_name)"
+        )
         self._conn.commit()
-        try:
-            self._conn.execute("ALTER TABLE intents ADD COLUMN model_name TEXT NOT NULL DEFAULT ''")
-            self._conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-        try:
-            self._conn.execute("ALTER TABLE intents ADD COLUMN page_url TEXT NOT NULL DEFAULT ''")
-            self._conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        for col in ("model_name TEXT NOT NULL DEFAULT ''", "page_url TEXT NOT NULL DEFAULT ''"):
+            try:
+                self._conn.execute(f"ALTER TABLE intents ADD COLUMN {col}")
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def store(
         self,
@@ -126,9 +165,15 @@ class IntentStore:
             desc_dict = _scrub_descriptor_dict(desc_dict, self._pii_patterns)
             stored_url = _scrub(page_url, self._pii_patterns)
             _log.debug("stored intent=%r with PII scrubbing applied", name)
+        blob = embedding.astype(np.float32).tobytes()
+        desc_json = json.dumps(desc_dict)
         self._conn.execute(
             "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, selector, json.dumps(desc_dict), embedding.astype(np.float32).tobytes(), model_name, stored_url),
+            (name, selector, desc_json, blob, model_name, stored_url),
+        )
+        self._conn.execute(
+            "INSERT INTO intent_versions (intent_name, selector, descriptor, embedding, model_name, page_url, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, selector, desc_json, blob, model_name, stored_url, self._recorded_by),
         )
         self._conn.commit()
 
@@ -157,6 +202,51 @@ class IntentStore:
     def count(self) -> int:
         """Return the number of stored intents."""
         return self._conn.execute("SELECT COUNT(*) FROM intents").fetchone()[0]
+
+    def get_version_history(self, name: str) -> list[IntentVersion]:
+        """Return all recorded versions for an intent, newest first."""
+        rows = self._conn.execute(
+            "SELECT id, intent_name, selector, descriptor, model_name, page_url, recorded_by, recorded_at "
+            "FROM intent_versions WHERE intent_name = ? ORDER BY recorded_at DESC",
+            (name,),
+        ).fetchall()
+        versions = []
+        for row in rows:
+            vid, iname, sel, desc_json, mname, purl, rby, rat = row
+            d = json.loads(desc_json)
+            versions.append(IntentVersion(
+                id=vid,
+                intent_name=iname,
+                selector=sel,
+                descriptor_text=d.get("text", ""),
+                model_name=mname,
+                page_url=purl,
+                recorded_by=rby,
+                recorded_at=rat,
+            ))
+        return versions
+
+    def rollback(self, name: str, version_id: int) -> bool:
+        """Restore the intent to a previously recorded version. Returns True on success."""
+        row = self._conn.execute(
+            "SELECT selector, descriptor, embedding, model_name, page_url "
+            "FROM intent_versions WHERE id = ? AND intent_name = ?",
+            (version_id, name),
+        ).fetchone()
+        if row is None:
+            return False
+        selector, desc_json, blob, model_name, page_url = row
+        self._conn.execute(
+            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, selector, desc_json, blob, model_name, page_url),
+        )
+        self._conn.execute(
+            "INSERT INTO intent_versions (intent_name, selector, descriptor, embedding, model_name, page_url, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, selector, desc_json, blob, model_name, page_url, f"rollback:{self._recorded_by}"),
+        )
+        self._conn.commit()
+        _log.info("rolled back intent=%r to version_id=%d", name, version_id)
+        return True
 
     def close(self) -> None:
         self._conn.close()
