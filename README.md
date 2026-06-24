@@ -1,4 +1,4 @@
-[![PyPI version](https://img.shields.io/pypi/v/canvas-heal.svg)](https://pypi.org/project/canvas-heal/) [![Python](https://img.shields.io/pypi/pyversions/canvas-heal.svg)](https://pypi.org/project/canvas-heal/)
+[![PyPI version](https://img.shields.io/pypi/v/canvas-heal.svg)](https://pypi.org/project/canvas-heal/) [![Python](https://img.shields.io/pypi/pyversions/canvas-heal.svg)](https://pypi.org/project/canvas-heal/) [![Coverage](https://img.shields.io/badge/coverage-≥80%25%20branch-brightgreen)](https://github.com/mandavillivijay/CANVAS/actions)
 
 # CANVAS
 Context-Aware Navigation and Visual Anchoring System for Selectors

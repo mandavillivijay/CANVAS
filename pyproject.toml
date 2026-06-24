@@ -39,6 +39,7 @@ canvas-heal = "canvas_heal.pytest_plugin"
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",
+    "pytest-cov>=6.0",
     "cyclonedx-bom>=4.0",
 ]
 selenium = [
@@ -53,3 +54,15 @@ Issues = "https://github.com/mandavillivijay/CANVAS/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["canvas_heal"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=canvas_heal --cov-branch --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+source = ["canvas_heal"]
+branch = true
+omit = ["tests/*", "hatch_build.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
