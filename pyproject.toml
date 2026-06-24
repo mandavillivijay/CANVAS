@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "cyclonedx-bom>=4.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -39,6 +39,7 @@ canvas-heal = "canvas_heal.pytest_plugin"
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",
+    "cyclonedx-bom>=4.0",
 ]
 selenium = [
     "selenium>=4.0.0",
@@ -47,6 +48,8 @@ selenium = [
 [project.urls]
 Homepage = "https://github.com/mandavillivijay/CANVAS"
 Issues = "https://github.com/mandavillivijay/CANVAS/issues"
+
+[tool.hatch.build.hooks.custom]
 
 [tool.hatch.build.targets.wheel]
 packages = ["canvas_heal"]
