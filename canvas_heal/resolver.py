@@ -16,6 +16,7 @@ import numpy as np
 
 _log = logging.getLogger("canvas_heal.resolver")
 
+from canvas_heal import _telemetry
 from canvas_heal.descriptor import SemanticDescriptor
 from canvas_heal.embedder import IntentEmbedder
 
@@ -207,7 +208,7 @@ class IntentStore:
         """Return all recorded versions for an intent, newest first."""
         rows = self._conn.execute(
             "SELECT id, intent_name, selector, descriptor, model_name, page_url, recorded_by, recorded_at "
-            "FROM intent_versions WHERE intent_name = ? ORDER BY recorded_at DESC",
+            "FROM intent_versions WHERE intent_name = ? ORDER BY recorded_at DESC, id DESC",
             (name,),
         ).fetchall()
         versions = []
@@ -286,13 +287,19 @@ class ConfidenceGatedResolver:
         page_url: str = "",
     ) -> None:
         """Embed and persist an intent fingerprint under the given name."""
-        _log.debug("recording intent=%r selector=%r url=%r", name, selector, page_url)
-        embedding = self._embedder.embed_descriptor(descriptor)
-        self._store.store(
-            name, selector, descriptor, embedding,
-            model_name=self._embedder.MODEL_NAME, page_url=page_url,
-        )
-        _log.debug("recorded intent=%r descriptor=%r", name, descriptor.to_text())
+        with _telemetry.span("canvas_heal.record", {
+            "canvas.intent_name": name,
+            "canvas.selector": selector,
+            "canvas.model_name": self._embedder.MODEL_NAME,
+        }):
+            _log.debug("recording intent=%r selector=%r url=%r", name, selector, page_url)
+            embedding = self._embedder.embed_descriptor(descriptor)
+            self._store.store(
+                name, selector, descriptor, embedding,
+                model_name=self._embedder.MODEL_NAME, page_url=page_url,
+            )
+            _telemetry.record_record(name, self._embedder.MODEL_NAME)
+            _log.debug("recorded intent=%r descriptor=%r", name, descriptor.to_text())
 
     def precompute_candidates(
         self, candidates: list[tuple[str, "SemanticDescriptor"]]
@@ -318,73 +325,85 @@ class ConfidenceGatedResolver:
         When skip_hidden is True, candidates that are hidden (is_visible=False)
         or disabled (is_disabled=True) are skipped before scoring.
         """
-        stored = self._store.get(name)
-        if stored is None:
-            _log.error("FAILED intent=%r reason='no intent stored'", name)
-            result = ResolverResult(Resolution.FAILED, None, 0.0, None, f"No intent stored for '{name}'")
-            self._log_event(name, result, original_selector="", page_url="")
-            return result
+        with _telemetry.span("canvas_heal.resolve", {
+            "canvas.intent_name": name,
+            "canvas.candidate_count": len(candidates),
+        }) as _span:
+            stored = self._store.get(name)
+            if stored is None:
+                _log.error("FAILED intent=%r reason='no intent stored'", name)
+                result = ResolverResult(Resolution.FAILED, None, 0.0, None, f"No intent stored for '{name}'")
+                _span.set_attribute("canvas.resolution", result.status.value)
+                _span.set_attribute("canvas.confidence", result.confidence)
+                self._log_event(name, result, original_selector="", page_url="")
+                return result
 
-        original_selector, _, stored_embedding, page_url = stored
+            original_selector, _, stored_embedding, page_url = stored
 
-        if not candidates:
-            _log.error("FAILED intent=%r reason='no candidates provided'", name)
-            result = ResolverResult(Resolution.FAILED, None, 0.0, None, "No candidates provided")
+            if not candidates:
+                _log.error("FAILED intent=%r reason='no candidates provided'", name)
+                result = ResolverResult(Resolution.FAILED, None, 0.0, None, "No candidates provided")
+                _span.set_attribute("canvas.resolution", result.status.value)
+                _span.set_attribute("canvas.confidence", result.confidence)
+                self._log_event(name, result, original_selector, page_url)
+                return result
+
+            _log.debug("resolving intent=%r candidates=%d", name, len(candidates))
+
+            best_selector: Optional[str] = None
+            best_descriptor: Optional[SemanticDescriptor] = None
+            best_score = -1.0
+            top_scores: list[float] = []
+
+            for item in candidates:
+                if len(item) == 3:
+                    selector, descriptor, candidate_embedding = item
+                else:
+                    selector, descriptor = item
+                    candidate_embedding = None
+
+                if skip_hidden:
+                    if getattr(descriptor, "is_visible", True) == False:
+                        continue
+                    if getattr(descriptor, "is_disabled", False) == True:
+                        continue
+
+                if candidate_embedding is None:
+                    candidate_embedding = self._embedder.embed_descriptor(descriptor)
+
+                score = IntentEmbedder.cosine_similarity(stored_embedding, candidate_embedding)
+                top_scores.append(score)
+                if score > best_score:
+                    best_score, best_selector, best_descriptor = score, selector, descriptor
+
+            top3 = sorted(top_scores, reverse=True)[:3]
+            _log.debug("intent=%r top3_scores=%s best=%.3f", name, [f"{s:.3f}" for s in top3], best_score)
+
+            if best_score >= self.threshold_auto:
+                result = ResolverResult(
+                    Resolution.HEALED, best_selector, best_score, best_descriptor,
+                    f"Auto-healed to '{best_selector}' (confidence {best_score:.3f})",
+                )
+                _log.info("HEALED intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
+            elif best_score >= self.threshold_confirm:
+                result = ResolverResult(
+                    Resolution.NEEDS_CONFIRMATION, best_selector, best_score, best_descriptor,
+                    f"Needs confirmation: best match '{best_selector}' (confidence {best_score:.3f})",
+                )
+                _log.warning("NEEDS_CONFIRMATION intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
+            else:
+                result = ResolverResult(
+                    Resolution.FAILED, None, best_score, best_descriptor,
+                    f"No confident match found (best confidence {best_score:.3f})",
+                )
+                _log.error("FAILED intent=%r best_confidence=%.3f", name, best_score)
+
+            _span.set_attribute("canvas.resolution", result.status.value)
+            _span.set_attribute("canvas.confidence", result.confidence)
+            if result.selector:
+                _span.set_attribute("canvas.resolved_selector", result.selector)
             self._log_event(name, result, original_selector, page_url)
             return result
-
-        _log.debug("resolving intent=%r candidates=%d", name, len(candidates))
-
-        best_selector: Optional[str] = None
-        best_descriptor: Optional[SemanticDescriptor] = None
-        best_score = -1.0
-        top_scores: list[float] = []
-
-        for item in candidates:
-            if len(item) == 3:
-                selector, descriptor, candidate_embedding = item
-            else:
-                selector, descriptor = item
-                candidate_embedding = None
-
-            if skip_hidden:
-                if getattr(descriptor, "is_visible", True) == False:
-                    continue
-                if getattr(descriptor, "is_disabled", False) == True:
-                    continue
-
-            if candidate_embedding is None:
-                candidate_embedding = self._embedder.embed_descriptor(descriptor)
-
-            score = IntentEmbedder.cosine_similarity(stored_embedding, candidate_embedding)
-            top_scores.append(score)
-            if score > best_score:
-                best_score, best_selector, best_descriptor = score, selector, descriptor
-
-        top3 = sorted(top_scores, reverse=True)[:3]
-        _log.debug("intent=%r top3_scores=%s best=%.3f", name, [f"{s:.3f}" for s in top3], best_score)
-
-        if best_score >= self.threshold_auto:
-            result = ResolverResult(
-                Resolution.HEALED, best_selector, best_score, best_descriptor,
-                f"Auto-healed to '{best_selector}' (confidence {best_score:.3f})",
-            )
-            _log.info("HEALED intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
-        elif best_score >= self.threshold_confirm:
-            result = ResolverResult(
-                Resolution.NEEDS_CONFIRMATION, best_selector, best_score, best_descriptor,
-                f"Needs confirmation: best match '{best_selector}' (confidence {best_score:.3f})",
-            )
-            _log.warning("NEEDS_CONFIRMATION intent=%r selector=%r confidence=%.3f", name, best_selector, best_score)
-        else:
-            result = ResolverResult(
-                Resolution.FAILED, None, best_score, best_descriptor,
-                f"No confident match found (best confidence {best_score:.3f})",
-            )
-            _log.error("FAILED intent=%r best_confidence=%.3f", name, best_score)
-
-        self._log_event(name, result, original_selector, page_url)
-        return result
 
     def _log_event(
         self,
@@ -402,6 +421,7 @@ class ConfidenceGatedResolver:
             page_url=page_url,
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
+        _telemetry.record_resolve(result.status.value, result.confidence, name)
 
     def get_audit_log(self) -> list[HealingEvent]:
         return self._audit_log

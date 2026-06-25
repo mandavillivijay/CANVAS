@@ -1,6 +1,4 @@
 import pytest
-from canvas_heal.embedder import IntentEmbedder
-from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore
 
 
 def pytest_addoption(parser):
@@ -25,6 +23,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def canvas_store(request):
+    from canvas_heal.resolver import IntentStore
     db = request.config.getoption("--canvas-db")
     scrub = request.config.getoption("--canvas-scrub-text")
     store = IntentStore(db, store_raw_text=not scrub)
@@ -34,10 +33,12 @@ def canvas_store(request):
 
 @pytest.fixture(scope="session")
 def canvas_embedder(request):
+    from canvas_heal.embedder import IntentEmbedder
     model = request.config.getoption("--canvas-model")
     return IntentEmbedder.get(model)
 
 
 @pytest.fixture(scope="session")
 def canvas_resolver(canvas_store, canvas_embedder):
+    from canvas_heal.resolver import ConfidenceGatedResolver
     return ConfidenceGatedResolver(canvas_store, canvas_embedder)

@@ -10,6 +10,8 @@ import numpy as np
 
 _log = logging.getLogger("canvas_heal.embedder")
 
+from canvas_heal import _telemetry
+
 MULTILINGUAL_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # SHA-256 of the primary weights file (model.safetensors or pytorch_model.bin).
@@ -123,10 +125,16 @@ class IntentEmbedder:
 
     def embed(self, text: str) -> np.ndarray:
         """Embed a text string into a normalized float32 vector (dim=384)."""
-        t0 = time.monotonic()
-        vec = self._model.encode(text, normalize_embeddings=True)
-        _log.debug("embed latency=%.3fs text_len=%d", time.monotonic() - t0, len(text))
-        return vec.astype(np.float32)
+        with _telemetry.span("canvas_heal.embed", {
+            "canvas.model_name": self.MODEL_NAME,
+            "canvas.text_length": len(text),
+        }):
+            t0 = time.monotonic()
+            vec = self._model.encode(text, normalize_embeddings=True)
+            duration = time.monotonic() - t0
+            _log.debug("embed latency=%.3fs text_len=%d", duration, len(text))
+            _telemetry.record_embed(duration, self.MODEL_NAME, batch_size=1)
+            return vec.astype(np.float32)
 
     def embed_descriptor(self, descriptor) -> np.ndarray:
         """Embed a SemanticDescriptor by calling its to_text() method."""
@@ -136,10 +144,16 @@ class IntentEmbedder:
         """Embed a list of texts in one batched call. Much faster than calling embed() in a loop."""
         if not texts:
             return []
-        t0 = time.monotonic()
-        vecs = self._model.encode(texts, normalize_embeddings=True, batch_size=32)
-        _log.debug("batch_embed candidates=%d latency=%.3fs", len(texts), time.monotonic() - t0)
-        return [v.astype(np.float32) for v in vecs]
+        with _telemetry.span("canvas_heal.batch_embed", {
+            "canvas.model_name": self.MODEL_NAME,
+            "canvas.batch_size": len(texts),
+        }):
+            t0 = time.monotonic()
+            vecs = self._model.encode(texts, normalize_embeddings=True, batch_size=32)
+            duration = time.monotonic() - t0
+            _log.debug("batch_embed candidates=%d latency=%.3fs", len(texts), duration)
+            _telemetry.record_embed(duration, self.MODEL_NAME, batch_size=len(texts))
+            return [v.astype(np.float32) for v in vecs]
 
     def batch_embed_descriptors(self, descriptors: list) -> list[np.ndarray]:
         """Batch-embed a list of SemanticDescriptors."""
