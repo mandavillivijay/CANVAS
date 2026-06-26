@@ -18,7 +18,7 @@ class SQLiteBackend(IntentStoreBackend):
     ) -> None:
         self.team_id = team_id
         self.project_id = project_id
-        self._conn = sqlite3.connect(str(db_path))
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:

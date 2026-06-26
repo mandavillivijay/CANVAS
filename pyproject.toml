@@ -45,6 +45,9 @@ dev = [
     "opentelemetry-sdk>=1.20.0",
     "alembic>=1.12",
     "sqlalchemy>=2.0",
+    "fastapi>=0.103",
+    "httpx>=0.27",
+    "uvicorn[standard]>=0.23",
 ]
 selenium = [
     "selenium>=4.0.0",
@@ -56,6 +59,11 @@ postgres = [
     "psycopg[pool]>=3.1",
     "alembic>=1.12",
     "sqlalchemy>=2.0",
+]
+server = [
+    "fastapi>=0.103",
+    "uvicorn[standard]>=0.23",
+    "httpx>=0.27",
 ]
 
 [project.urls]
@@ -73,7 +81,7 @@ addopts = "--cov=canvas_heal --cov-branch --cov-report=term-missing --cov-report
 [tool.coverage.run]
 source = ["canvas_heal"]
 branch = true
-omit = ["tests/*", "hatch_build.py", "canvas_heal/cli.py", "canvas_heal/pytest_plugin.py", "canvas_heal/migrations/*", "canvas_heal/backends/postgres.py"]
+omit = ["tests/*", "hatch_build.py", "canvas_heal/cli.py", "canvas_heal/pytest_plugin.py", "canvas_heal/migrations/*", "canvas_heal/backends/postgres.py", "canvas_heal/client.py"]
 
 [tool.coverage.report]
 fail_under = 80

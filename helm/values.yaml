@@ -1,0 +1,62 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/mandavillivijay/canvas-heal
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Store backend URL — use postgresql:// for parallel CI write safety.
+# For single-node use, keep the default SQLite path on a PVC.
+storeUrl: "sqlite:////data/canvas_intents.db"
+
+# Optional multi-tenant namespacing
+teamId: ""
+projectId: ""
+
+# Embedding model (must match your intent baselines)
+model: "all-MiniLM-L6-v2"
+
+# API key for X-Canvas-Api-Key header auth.
+# Set via a Secret in production; leave empty to disable auth.
+apiKey: ""
+
+# Mount a PersistentVolumeClaim at /data for the SQLite file.
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# Mount a PVC or hostPath for the model cache so the model is not
+# re-downloaded on every pod start.
+modelCache:
+  enabled: true
+  storageClass: ""
+  size: 2Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10

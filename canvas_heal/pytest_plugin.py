@@ -28,6 +28,20 @@ def pytest_addoption(parser):
         help="Project namespace for the canvas-heal intent store (multi-tenant).",
     )
     group.addoption(
+        "--canvas-server-url",
+        default=None,
+        help=(
+            "URL of a running canvas-heal server. When set, CI agents skip local "
+            "model loading and proxy record/resolve calls over HTTP. "
+            "Example: http://canvas-heal:8000"
+        ),
+    )
+    group.addoption(
+        "--canvas-api-key",
+        default="",
+        help="API key sent as X-Canvas-Api-Key header to the canvas-heal server.",
+    )
+    group.addoption(
         "--canvas-model",
         default="all-MiniLM-L6-v2",
         help="Sentence-transformers model name for intent embedding",
@@ -76,6 +90,14 @@ def canvas_embedder(request):
 
 
 @pytest.fixture(scope="session")
-def canvas_resolver(canvas_store, canvas_embedder):
-    from canvas_heal.resolver import ConfidenceGatedResolver
-    return ConfidenceGatedResolver(canvas_store, canvas_embedder)
+def canvas_resolver(request, canvas_store, canvas_embedder):
+    server_url = request.config.getoption("--canvas-server-url")
+    if server_url:
+        from canvas_heal.client import RemoteCanvasResolver
+        api_key = request.config.getoption("--canvas-api-key")
+        resolver = RemoteCanvasResolver(server_url, api_key=api_key)
+        yield resolver
+        resolver.close()
+    else:
+        from canvas_heal.resolver import ConfidenceGatedResolver
+        yield ConfidenceGatedResolver(canvas_store, canvas_embedder)

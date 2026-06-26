@@ -1,0 +1,16 @@
+apiVersion: v2
+name: canvas-heal
+description: Shared semantic self-healing locator service for parallel CI pipelines
+type: application
+version: 0.1.0
+appVersion: "0.3.0"
+keywords:
+  - testing
+  - selenium
+  - playwright
+  - self-healing
+sources:
+  - https://github.com/mandavillivijay/CANVAS
+maintainers:
+  - name: mandavillivijay
+    url: https://github.com/mandavillivijay

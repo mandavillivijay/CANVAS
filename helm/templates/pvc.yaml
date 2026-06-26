@@ -1,0 +1,35 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "canvas-heal.fullname" . }}-data
+  labels:
+    {{- include "canvas-heal.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}
+---
+{{- if .Values.modelCache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "canvas-heal.fullname" . }}-model-cache
+  labels:
+    {{- include "canvas-heal.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.modelCache.accessMode }}
+  {{- if .Values.modelCache.storageClass }}
+  storageClassName: {{ .Values.modelCache.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.size }}
+{{- end }}

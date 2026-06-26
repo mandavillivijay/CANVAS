@@ -131,6 +131,29 @@ def _cmd_rollback(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print("Error: uvicorn is not installed. Install it with 'pip install canvas-heal[server]'.", file=sys.stderr)
+        return 1
+
+    from canvas_heal.server import create_app
+
+    store_url: str | None = getattr(args, "store_url", None)
+    app = create_app(
+        model=args.model,
+        store_url=store_url,
+        db_path=None if store_url else getattr(args, "db", None),
+        team_id=getattr(args, "team_id", ""),
+        project_id=getattr(args, "project_id", ""),
+        threshold_auto=args.threshold_auto,
+        threshold_confirm=args.threshold_confirm,
+    )
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="canvas-heal", description="CANVAS-HEAL semantic self-healing locator CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -162,6 +185,15 @@ def main() -> None:
     p_rollback.add_argument("--version-id", required=True, type=int, dest="version_id", help="Version ID from 'canvas-heal history'")
     _add_store_args(p_rollback)
     p_rollback.set_defaults(func=_cmd_rollback)
+
+    p_serve = subparsers.add_parser("serve", help="Run canvas-heal as a shared REST embedding service")
+    _add_store_args(p_serve, require_db=False)
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    p_serve.add_argument("--model", default="all-MiniLM-L6-v2", help="Embedding model name")
+    p_serve.add_argument("--threshold-auto", type=float, dest="threshold_auto", default=0.92)
+    p_serve.add_argument("--threshold-confirm", type=float, dest="threshold_confirm", default=0.75)
+    p_serve.set_defaults(func=_cmd_serve)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

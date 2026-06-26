@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "canvas-heal.fullname" . }}
+  labels:
+    {{- include "canvas-heal.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "canvas-heal.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "canvas-heal.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: canvas-heal
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "{{ .Values.service.port }}"
+            - "--store-url"
+            - "{{ .Values.storeUrl }}"
+            - "--model"
+            - "{{ .Values.model }}"
+            {{- if .Values.teamId }}
+            - "--team-id"
+            - "{{ .Values.teamId }}"
+            {{- end }}
+            {{- if .Values.projectId }}
+            - "--project-id"
+            - "{{ .Values.projectId }}"
+            {{- end }}
+          env:
+            - name: CANVAS_MODEL_CACHE_DIR
+              value: /var/cache/canvas-heal
+            {{- if .Values.apiKey }}
+            - name: CANVAS_API_KEY
+              value: {{ .Values.apiKey | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+            {{- if .Values.modelCache.enabled }}
+            - name: model-cache
+              mountPath: /var/cache/canvas-heal
+            {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "canvas-heal.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.modelCache.enabled }}
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ include "canvas-heal.fullname" . }}-model-cache
+        {{- end }}
