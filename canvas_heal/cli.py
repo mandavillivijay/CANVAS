@@ -94,6 +94,42 @@ def _cmd_rollback(args: argparse.Namespace) -> int:
     return 0
 
 
+_SPARK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: list[float]) -> str:
+    if not values:
+        return ""
+    lo, hi = min(values), max(values)
+    span = hi - lo or 1e-9
+    return "".join(
+        _SPARK_CHARS[min(int((v - lo) / span * (len(_SPARK_CHARS) - 1)), len(_SPARK_CHARS) - 1)]
+        for v in values
+    )
+
+
+def _cmd_drift(args: argparse.Namespace) -> int:
+    store = IntentStore(args.db)
+    try:
+        trends = store.get_all_confidence_trends(window=args.window)
+        if not trends:
+            print("No confidence history found. Run some heal() calls first.")
+            return 0
+        threshold = args.threshold
+        print(f"{'Intent':<30}  {'Avg':>6}  {'N':>4}  {'Drift?':>6}  Sparkline")
+        print("-" * 72)
+        for t in trends:
+            avg = t["rolling_avg"]
+            drifting = avg is not None and t["sample_count"] >= args.window and avg < threshold
+            avg_str = f"{avg:.3f}" if avg is not None else "  n/a"
+            drift_str = "⚠ YES" if drifting else "  ok"
+            spark = _sparkline(t["values"])
+            print(f"{t['intent_name']:<30}  {avg_str:>6}  {t['sample_count']:>4}  {drift_str:>6}  {spark}")
+    finally:
+        store.close()
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="canvas-heal", description="CANVAS-HEAL semantic self-healing locator CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -125,6 +161,12 @@ def main() -> None:
     p_rollback.add_argument("--version-id", required=True, type=int, dest="version_id", help="Version ID from 'canvas-heal history'")
     p_rollback.add_argument("--db", required=True, help="Path to the intent store database")
     p_rollback.set_defaults(func=_cmd_rollback)
+
+    p_drift = subparsers.add_parser("drift", help="Show confidence drift trend for all intents")
+    p_drift.add_argument("--db", required=True, help="Path to the intent store database")
+    p_drift.add_argument("--window", type=int, default=30, help="Number of recent resolve calls to analyse (default: 30)")
+    p_drift.add_argument("--threshold", type=float, default=0.85, help="Drift threshold (default: 0.85)")
+    p_drift.set_defaults(func=_cmd_drift)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

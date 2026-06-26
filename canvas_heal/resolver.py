@@ -143,6 +143,18 @@ class IntentStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_versions_intent_name ON intent_versions (intent_name)"
         )
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS confidence_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                intent_name TEXT    NOT NULL,
+                confidence  REAL    NOT NULL,
+                resolution  TEXT    NOT NULL,
+                recorded_at TEXT    DEFAULT (datetime('now'))
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_confidence_intent_name ON confidence_history (intent_name)"
+        )
         self._conn.commit()
         for col in ("model_name TEXT NOT NULL DEFAULT ''", "page_url TEXT NOT NULL DEFAULT ''"):
             try:
@@ -249,6 +261,34 @@ class IntentStore:
         _log.info("rolled back intent=%r to version_id=%d", name, version_id)
         return True
 
+    def log_confidence(self, intent_name: str, confidence: float, resolution: str) -> None:
+        self._conn.execute(
+            "INSERT INTO confidence_history (intent_name, confidence, resolution) VALUES (?, ?, ?)",
+            (intent_name, confidence, resolution),
+        )
+        self._conn.commit()
+
+    def get_confidence_trend(self, name: str, window: int = 10) -> dict:
+        """Return rolling confidence stats for the last *window* resolve calls."""
+        rows = self._conn.execute(
+            "SELECT confidence FROM confidence_history WHERE intent_name = ? ORDER BY id DESC LIMIT ?",
+            (name, window),
+        ).fetchall()
+        values = [r[0] for r in reversed(rows)]
+        rolling_avg = sum(values) / len(values) if values else None
+        return {
+            "intent_name": name,
+            "values": values,
+            "rolling_avg": rolling_avg,
+            "window": window,
+            "sample_count": len(values),
+        }
+
+    def get_all_confidence_trends(self, window: int = 30) -> list[dict]:
+        """Return confidence trends for every known intent."""
+        names = [row[0] for row in self._conn.execute("SELECT DISTINCT intent_name FROM confidence_history ORDER BY intent_name").fetchall()]
+        return [self.get_confidence_trend(n, window=window) for n in names]
+
     def close(self) -> None:
         self._conn.close()
 
@@ -272,11 +312,18 @@ class ConfidenceGatedResolver:
         embedder: Optional[IntentEmbedder] = None,
         threshold_auto: float = THRESHOLD_AUTO_HEAL,
         threshold_confirm: float = THRESHOLD_CONFIRM,
+        drift_threshold: float = 0.85,
+        drift_window: int = 10,
+        drift_webhook_url: Optional[str] = None,
     ) -> None:
         self._store = store
         self._embedder = embedder or IntentEmbedder.get()
         self.threshold_auto = threshold_auto
         self.threshold_confirm = threshold_confirm
+        self.drift_threshold = drift_threshold
+        self.drift_window = drift_window
+        self._drift_webhook_url = drift_webhook_url
+        self._webhook_fired: set[str] = set()
         self._audit_log: list[HealingEvent] = []
 
     def record(
@@ -422,6 +469,45 @@ class ConfidenceGatedResolver:
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
         _telemetry.record_resolve(result.status.value, result.confidence, name)
+        self._store.log_confidence(name, result.confidence, result.status.value)
+        self._check_drift(name)
+
+    def _check_drift(self, name: str) -> None:
+        trend = self._store.get_confidence_trend(name, window=self.drift_window)
+        if trend["sample_count"] < self.drift_window:
+            return
+        avg = trend["rolling_avg"]
+        if avg is not None and avg < self.drift_threshold:
+            _log.warning(
+                "DRIFT DETECTED intent=%r rolling_avg=%.3f threshold=%.3f window=%d",
+                name, avg, self.drift_threshold, self.drift_window,
+            )
+            if self._drift_webhook_url and name not in self._webhook_fired:
+                self._fire_webhook(name, avg)
+                self._webhook_fired.add(name)
+
+    def _fire_webhook(self, intent_name: str, rolling_avg: float) -> None:
+        import json as _json
+        import urllib.request
+        payload = _json.dumps({
+            "text": (
+                f"⚠️ CANVAS drift alert: intent '{intent_name}' "
+                f"rolling confidence {rolling_avg:.3f} < {self.drift_threshold:.3f}"
+            ),
+            "intent_name": intent_name,
+            "rolling_avg": rolling_avg,
+            "drift_threshold": self.drift_threshold,
+        }).encode()
+        req = urllib.request.Request(
+            self._drift_webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            _log.info("drift webhook fired for intent=%r", intent_name)
+        except Exception as exc:
+            _log.warning("drift webhook failed for intent=%r: %s", intent_name, exc)
 
     def get_audit_log(self) -> list[HealingEvent]:
         return self._audit_log

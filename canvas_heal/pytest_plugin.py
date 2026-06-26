@@ -19,6 +19,17 @@ def pytest_addoption(parser):
         default=False,
         help="Scrub PII (emails, phone numbers) from text stored in the intent database",
     )
+    group.addoption(
+        "--canvas-drift-threshold",
+        type=float,
+        default=0.85,
+        help="Rolling confidence threshold below which a drift warning is emitted (default: 0.85)",
+    )
+    group.addoption(
+        "--canvas-drift-webhook",
+        default=None,
+        help="Slack (or generic) webhook URL to POST drift alerts to (fired once per intent per session)",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +50,11 @@ def canvas_embedder(request):
 
 
 @pytest.fixture(scope="session")
-def canvas_resolver(canvas_store, canvas_embedder):
+def canvas_resolver(request, canvas_store, canvas_embedder):
     from canvas_heal.resolver import ConfidenceGatedResolver
-    return ConfidenceGatedResolver(canvas_store, canvas_embedder)
+    return ConfidenceGatedResolver(
+        canvas_store,
+        canvas_embedder,
+        drift_threshold=request.config.getoption("--canvas-drift-threshold"),
+        drift_webhook_url=request.config.getoption("--canvas-drift-webhook"),
+    )
