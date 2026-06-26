@@ -94,6 +94,33 @@ def _cmd_rollback(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rerecord_all(args: argparse.Namespace) -> int:
+    from canvas_heal.batch import BulkRerecorder, load_page_map, print_report
+    try:
+        page_map = load_page_map(args.page_map)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(f"Error reading page map: {exc}", file=sys.stderr)
+        return 1
+
+    store = IntentStore(args.db, store_raw_text=not args.scrub_text)
+    rerecorder = BulkRerecorder(
+        store,
+        IntentEmbedder.get(args.model),
+        regression_threshold=args.threshold,
+        dry_run=args.dry_run,
+    )
+    try:
+        results = rerecorder.run(page_map)
+    except ImportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    _, _, regressions, errors = print_report(results, regression_threshold=args.threshold)
+    return 1 if (errors or regressions) else 0
+
+
 _SPARK_CHARS = "▁▂▃▄▅▆▇█"
 
 
@@ -161,6 +188,15 @@ def main() -> None:
     p_rollback.add_argument("--version-id", required=True, type=int, dest="version_id", help="Version ID from 'canvas-heal history'")
     p_rollback.add_argument("--db", required=True, help="Path to the intent store database")
     p_rollback.set_defaults(func=_cmd_rollback)
+
+    p_rerecord_all = subparsers.add_parser("rerecord-all", help="Bulk re-record intents from a page-map JSON file")
+    p_rerecord_all.add_argument("--page-map", required=True, dest="page_map", help="Path to page-map JSON file")
+    p_rerecord_all.add_argument("--db", required=True, help="Path to the intent store database")
+    p_rerecord_all.add_argument("--model", default="all-MiniLM-L6-v2", help="Embedding model name")
+    p_rerecord_all.add_argument("--threshold", type=float, default=0.75, help="Similarity threshold for regression flagging (default: 0.75)")
+    p_rerecord_all.add_argument("--dry-run", action="store_true", dest="dry_run", help="Show what would change without writing to the database")
+    p_rerecord_all.add_argument("--scrub-text", action="store_true", dest="scrub_text", help="Scrub PII from stored text fields")
+    p_rerecord_all.set_defaults(func=_cmd_rerecord_all)
 
     p_drift = subparsers.add_parser("drift", help="Show confidence drift trend for all intents")
     p_drift.add_argument("--db", required=True, help="Path to the intent store database")
