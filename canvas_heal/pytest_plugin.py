@@ -6,7 +6,26 @@ def pytest_addoption(parser):
     group.addoption(
         "--canvas-db",
         default=":memory:",
-        help="Path to canvas-heal intent database (default: :memory:)",
+        help="Path to canvas-heal SQLite database (default: :memory:). "
+             "Superseded by --canvas-store-url when both are provided.",
+    )
+    group.addoption(
+        "--canvas-store-url",
+        default=None,
+        help=(
+            "Store URL for canvas-heal (overrides --canvas-db). "
+            "Examples: sqlite:///canvas_intents.db, postgresql://user:pass@host/db"
+        ),
+    )
+    group.addoption(
+        "--canvas-team-id",
+        default="",
+        help="Team namespace for the canvas-heal intent store (multi-tenant).",
+    )
+    group.addoption(
+        "--canvas-project-id",
+        default="",
+        help="Project namespace for the canvas-heal intent store (multi-tenant).",
     )
     group.addoption(
         "--canvas-model",
@@ -23,10 +42,28 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def canvas_store(request):
-    from canvas_heal.resolver import IntentStore
-    db = request.config.getoption("--canvas-db")
+    from canvas_heal.resolver import IntentStore, open_store
+
+    store_url = request.config.getoption("--canvas-store-url")
+    team_id = request.config.getoption("--canvas-team-id")
+    project_id = request.config.getoption("--canvas-project-id")
     scrub = request.config.getoption("--canvas-scrub-text")
-    store = IntentStore(db, store_raw_text=not scrub)
+
+    if store_url:
+        store = open_store(
+            store_url,
+            store_raw_text=not scrub,
+            team_id=team_id,
+            project_id=project_id,
+        )
+    else:
+        db = request.config.getoption("--canvas-db")
+        store = IntentStore(
+            db,
+            store_raw_text=not scrub,
+            team_id=team_id,
+            project_id=project_id,
+        )
     yield store
     store.close()
 

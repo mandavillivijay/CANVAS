@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ import numpy as np
 _log = logging.getLogger("canvas_heal.resolver")
 
 from canvas_heal import _telemetry
+from canvas_heal.backends import IntentStoreBackend, SQLiteBackend, open_backend
 from canvas_heal.descriptor import SemanticDescriptor
 from canvas_heal.embedder import IntentEmbedder
 
@@ -101,55 +101,37 @@ _DEFAULT_DB = Path(__file__).parent.parent / "canvas_intents.db"
 
 
 class IntentStore:
-    """SQLite-backed store for intent fingerprints (descriptor + embedding)."""
+    """Facade over a storage backend for intent fingerprints.
+
+    Accepts either a legacy ``db_path`` (SQLite) or a pre-built backend
+    via the ``_backend`` parameter (or use :func:`open_store` for URL-based
+    construction).  PII scrubbing and numpy serialization live here; the
+    backend stores raw bytes and JSON strings.
+    """
 
     def __init__(
         self,
         db_path: str | Path | None = None,
         store_raw_text: bool = True,
         pii_patterns: list[re.Pattern] | None = None,
+        team_id: str = "",
+        project_id: str = "",
+        _backend: IntentStoreBackend | None = None,
     ) -> None:
-        if db_path is None:
-            db_path = _DEFAULT_DB
         self._store_raw_text = store_raw_text
         self._pii_patterns = pii_patterns if pii_patterns is not None else _PII_PATTERNS
         self._recorded_by = _get_git_email()
-        self._conn = sqlite3.connect(str(db_path))
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS intents (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                name        TEXT    NOT NULL UNIQUE,
-                selector    TEXT    NOT NULL,
-                descriptor  TEXT    NOT NULL,
-                embedding   BLOB    NOT NULL,
-                model_name  TEXT    NOT NULL DEFAULT '',
-                page_url    TEXT    NOT NULL DEFAULT '',
-                created_at  TEXT    DEFAULT (datetime('now'))
-            )
-        """)
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS intent_versions (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                intent_name TEXT    NOT NULL,
-                selector    TEXT    NOT NULL,
-                descriptor  TEXT    NOT NULL,
-                embedding   BLOB    NOT NULL,
-                model_name  TEXT    NOT NULL DEFAULT '',
-                page_url    TEXT    NOT NULL DEFAULT '',
-                recorded_by TEXT    NOT NULL DEFAULT '',
-                recorded_at TEXT    DEFAULT (datetime('now'))
-            )
-        """)
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_versions_intent_name ON intent_versions (intent_name)"
-        )
-        self._conn.commit()
-        for col in ("model_name TEXT NOT NULL DEFAULT ''", "page_url TEXT NOT NULL DEFAULT ''"):
-            try:
-                self._conn.execute(f"ALTER TABLE intents ADD COLUMN {col}")
-                self._conn.commit()
-            except sqlite3.OperationalError:
-                pass  # column already exists
+
+        if _backend is not None:
+            self._backend: IntentStoreBackend = _backend
+        else:
+            if db_path is None:
+                db_path = _DEFAULT_DB
+            self._backend = SQLiteBackend(str(db_path), team_id=team_id, project_id=project_id)
+
+    # ------------------------------------------------------------------
+    # Public write API
+    # ------------------------------------------------------------------
 
     def store(
         self,
@@ -168,20 +150,21 @@ class IntentStore:
             _log.debug("stored intent=%r with PII scrubbing applied", name)
         blob = embedding.astype(np.float32).tobytes()
         desc_json = json.dumps(desc_dict)
-        self._conn.execute(
-            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, selector, desc_json, blob, model_name, stored_url),
-        )
-        self._conn.execute(
-            "INSERT INTO intent_versions (intent_name, selector, descriptor, embedding, model_name, page_url, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, selector, desc_json, blob, model_name, stored_url, self._recorded_by),
-        )
-        self._conn.commit()
+        self._backend.store(name, selector, desc_json, blob, model_name, stored_url, self._recorded_by)
+
+    def rollback(self, name: str, version_id: int) -> bool:
+        """Restore the intent to a previously recorded version. Returns True on success."""
+        ok = self._backend.rollback(name, version_id, f"rollback:{self._recorded_by}")
+        if ok:
+            _log.info("rolled back intent=%r to version_id=%d", name, version_id)
+        return ok
+
+    # ------------------------------------------------------------------
+    # Public read API
+    # ------------------------------------------------------------------
 
     def get(self, name: str) -> Optional[Tuple[str, SemanticDescriptor, np.ndarray, str]]:
-        row = self._conn.execute(
-            "SELECT selector, descriptor, embedding, page_url FROM intents WHERE name = ?", (name,)
-        ).fetchone()
+        row = self._backend.get(name)
         if row is None:
             return None
         selector, descriptor_json, blob, page_url = row
@@ -196,67 +179,60 @@ class IntentStore:
         return selector, descriptor, np.frombuffer(blob, dtype=np.float32).copy(), page_url
 
     def all(self) -> list[tuple[str, str]]:
-        """Return list of (name, selector) for all stored intents."""
-        rows = self._conn.execute("SELECT name, selector FROM intents ORDER BY name").fetchall()
-        return [(row[0], row[1]) for row in rows]
+        return self._backend.all()
 
     def count(self) -> int:
-        """Return the number of stored intents."""
-        return self._conn.execute("SELECT COUNT(*) FROM intents").fetchone()[0]
+        return self._backend.count()
 
     def get_version_history(self, name: str) -> list[IntentVersion]:
-        """Return all recorded versions for an intent, newest first."""
-        rows = self._conn.execute(
-            "SELECT id, intent_name, selector, descriptor, model_name, page_url, recorded_by, recorded_at "
-            "FROM intent_versions WHERE intent_name = ? ORDER BY recorded_at DESC, id DESC",
-            (name,),
-        ).fetchall()
+        rows = self._backend.get_version_history(name)
         versions = []
-        for row in rows:
-            vid, iname, sel, desc_json, mname, purl, rby, rat = row
-            d = json.loads(desc_json)
+        for r in rows:
+            d = json.loads(r["descriptor_json"])
             versions.append(IntentVersion(
-                id=vid,
-                intent_name=iname,
-                selector=sel,
+                id=r["id"],
+                intent_name=r["intent_name"],
+                selector=r["selector"],
                 descriptor_text=d.get("text", ""),
-                model_name=mname,
-                page_url=purl,
-                recorded_by=rby,
-                recorded_at=rat,
+                model_name=r["model_name"],
+                page_url=r["page_url"],
+                recorded_by=r["recorded_by"],
+                recorded_at=r["recorded_at"],
             ))
         return versions
 
-    def rollback(self, name: str, version_id: int) -> bool:
-        """Restore the intent to a previously recorded version. Returns True on success."""
-        row = self._conn.execute(
-            "SELECT selector, descriptor, embedding, model_name, page_url "
-            "FROM intent_versions WHERE id = ? AND intent_name = ?",
-            (version_id, name),
-        ).fetchone()
-        if row is None:
-            return False
-        selector, desc_json, blob, model_name, page_url = row
-        self._conn.execute(
-            "INSERT OR REPLACE INTO intents (name, selector, descriptor, embedding, model_name, page_url) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, selector, desc_json, blob, model_name, page_url),
-        )
-        self._conn.execute(
-            "INSERT INTO intent_versions (intent_name, selector, descriptor, embedding, model_name, page_url, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, selector, desc_json, blob, model_name, page_url, f"rollback:{self._recorded_by}"),
-        )
-        self._conn.commit()
-        _log.info("rolled back intent=%r to version_id=%d", name, version_id)
-        return True
-
     def close(self) -> None:
-        self._conn.close()
+        self._backend.close()
 
     def __enter__(self) -> IntentStore:
         return self
 
     def __exit__(self, *_) -> None:
         self.close()
+
+
+def open_store(
+    url: str,
+    store_raw_text: bool = True,
+    pii_patterns: list[re.Pattern] | None = None,
+    team_id: str = "",
+    project_id: str = "",
+    **backend_kwargs,
+) -> IntentStore:
+    """Create an :class:`IntentStore` from a URL.
+
+    Examples::
+
+        store = open_store("sqlite:///:memory:")
+        store = open_store("sqlite:///canvas_intents.db", team_id="ci", project_id="my-app")
+        store = open_store("postgresql://user:pass@localhost/canvas", team_id="ci")
+    """
+    backend = open_backend(url, team_id=team_id, project_id=project_id, **backend_kwargs)
+    return IntentStore(
+        store_raw_text=store_raw_text,
+        pii_patterns=pii_patterns,
+        _backend=backend,
+    )
 
 
 class ConfidenceGatedResolver:

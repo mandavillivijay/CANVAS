@@ -4,7 +4,44 @@ import argparse
 import sys
 
 from canvas_heal.embedder import IntentEmbedder
-from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore
+from canvas_heal.resolver import ConfidenceGatedResolver, IntentStore, open_store
+
+
+def _open_store(args: argparse.Namespace) -> IntentStore:
+    """Build an IntentStore from CLI args (supports both --db and --store-url)."""
+    store_url: str | None = getattr(args, "store_url", None)
+    team_id: str = getattr(args, "team_id", "")
+    project_id: str = getattr(args, "project_id", "")
+    scrub: bool = getattr(args, "scrub_text", False)
+
+    if store_url:
+        return open_store(
+            store_url,
+            store_raw_text=not scrub,
+            team_id=team_id,
+            project_id=project_id,
+        )
+    return IntentStore(
+        args.db,
+        store_raw_text=not scrub,
+        team_id=team_id,
+        project_id=project_id,
+    )
+
+
+def _add_store_args(parser: argparse.ArgumentParser, *, require_db: bool = True) -> None:
+    """Attach the standard store location / namespace arguments to a subcommand."""
+    group = parser.add_mutually_exclusive_group(required=require_db)
+    group.add_argument("--db", default=None, help="Path to SQLite intent database")
+    group.add_argument(
+        "--store-url",
+        dest="store_url",
+        default=None,
+        metavar="URL",
+        help="Store URL (sqlite:///path or postgresql://user:pass@host/db)",
+    )
+    parser.add_argument("--team-id", dest="team_id", default="", help="Team namespace")
+    parser.add_argument("--project-id", dest="project_id", default="", help="Project namespace")
 
 
 def _cmd_rerecord(args: argparse.Namespace) -> int:
@@ -23,7 +60,7 @@ def _cmd_rerecord(args: argparse.Namespace) -> int:
             page.goto(args.url)
             descriptor = extract_from_playwright(page, args.selector)
 
-            store = IntentStore(args.db, store_raw_text=not args.scrub_text)
+            store = _open_store(args)
             resolver = ConfidenceGatedResolver(store, IntentEmbedder.get(args.model))
             resolver.record(args.name, args.selector, descriptor)
             store.close()
@@ -38,7 +75,7 @@ def _cmd_rerecord(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    store = IntentStore(args.db)
+    store = _open_store(args)
     try:
         intents = store.all()
         if not intents:
@@ -52,7 +89,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
-    store = IntentStore(args.db)
+    store = _open_store(args)
     try:
         print(f"Total intents: {store.count()}")
         for name, selector in store.all():
@@ -63,7 +100,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 
 
 def _cmd_history(args: argparse.Namespace) -> int:
-    store = IntentStore(args.db)
+    store = _open_store(args)
     try:
         versions = store.get_version_history(args.name)
         if not versions:
@@ -82,7 +119,7 @@ def _cmd_history(args: argparse.Namespace) -> int:
 
 
 def _cmd_rollback(args: argparse.Namespace) -> int:
-    store = IntentStore(args.db)
+    store = _open_store(args)
     try:
         ok = store.rollback(args.name, args.version_id)
         if not ok:
@@ -102,28 +139,28 @@ def main() -> None:
     p_rerecord.add_argument("--url", required=True, help="Page URL to navigate to")
     p_rerecord.add_argument("--selector", required=True, help="CSS selector of the target element")
     p_rerecord.add_argument("--name", required=True, help="Intent name to store under")
-    p_rerecord.add_argument("--db", required=True, help="Path to the intent store database")
+    _add_store_args(p_rerecord)
     p_rerecord.add_argument("--model", default="all-MiniLM-L6-v2", help="Embedding model name")
-    p_rerecord.add_argument("--scrub-text", action="store_true", help="Scrub PII (emails, phone numbers) from stored text fields")
+    p_rerecord.add_argument("--scrub-text", action="store_true", dest="scrub_text", help="Scrub PII from stored text fields")
     p_rerecord.set_defaults(func=_cmd_rerecord)
 
     p_list = subparsers.add_parser("list", help="List all stored intents")
-    p_list.add_argument("--db", required=True, help="Path to the intent store database")
+    _add_store_args(p_list)
     p_list.set_defaults(func=_cmd_list)
 
     p_audit = subparsers.add_parser("audit", help="Show stored intent count and details")
-    p_audit.add_argument("--db", required=True, help="Path to the intent store database")
+    _add_store_args(p_audit)
     p_audit.set_defaults(func=_cmd_audit)
 
     p_history = subparsers.add_parser("history", help="Show version history for a recorded intent")
     p_history.add_argument("--name", required=True, help="Intent name")
-    p_history.add_argument("--db", required=True, help="Path to the intent store database")
+    _add_store_args(p_history)
     p_history.set_defaults(func=_cmd_history)
 
     p_rollback = subparsers.add_parser("rollback", help="Restore an intent to a previous version")
     p_rollback.add_argument("--name", required=True, help="Intent name")
     p_rollback.add_argument("--version-id", required=True, type=int, dest="version_id", help="Version ID from 'canvas-heal history'")
-    p_rollback.add_argument("--db", required=True, help="Path to the intent store database")
+    _add_store_args(p_rollback)
     p_rollback.set_defaults(func=_cmd_rollback)
 
     args = parser.parse_args()

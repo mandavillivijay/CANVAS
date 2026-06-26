@@ -220,11 +220,10 @@ def test_store_raw_text_false_scrubs_stored_data():
     desc = extract_from_tag(_tag('<input placeholder="Enter email@example.com">'))
     res.record("email_input", "#email", desc, page_url="https://app.com/profile?user=bob@test.com")
 
-    row = store._conn.execute(
-        "SELECT descriptor, page_url FROM intents WHERE name = 'email_input'"
-    ).fetchone()
-    stored_desc = json.loads(row[0])
-    stored_url = row[1]
+    # Inspect raw stored data via the backend (PII scrubbing test needs raw JSON)
+    raw = store._backend.get("email_input")
+    stored_desc = json.loads(raw[1])
+    stored_url = raw[3]
 
     assert "email@example.com" not in stored_desc.get("placeholder", "")
     assert "bob@test.com" not in stored_url
@@ -342,11 +341,9 @@ def test_store_raw_text_true_preserves_data():
     desc = extract_from_tag(_tag('<input placeholder="user@example.com">'))
     res.record("email_input", "#email", desc, page_url="https://app.com?user=test@example.com")
 
-    row = store._conn.execute(
-        "SELECT descriptor, page_url FROM intents WHERE name = 'email_input'"
-    ).fetchone()
-    stored_desc = json.loads(row[0])
-    stored_url = row[1]
+    raw = store._backend.get("email_input")
+    stored_desc = json.loads(raw[1])
+    stored_url = raw[3]
 
     assert "user@example.com" in stored_desc.get("placeholder", "")
     assert "test@example.com" in stored_url
